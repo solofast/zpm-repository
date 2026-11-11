@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工作台</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat-lyra.cdn.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+  <style>
+    /* ===== 工作台自有样式（wb- 前缀；颜色一律引用主题 token） =====
+     * 留白节奏与 theme-studio 对齐：main 左右 24px、上限 1200px；卡片显式补左右内距
+     * （basecoat .card 只有 padding-block，直接内容子元素左右贴边）。 */
+    .wb-main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 16px 24px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .wb-main > .card { padding: 18px 26px; gap: 12px; }
+    .wb-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .wb-head h1 { margin: 0; font-size: 20px; }
+    .wb-main h2 { margin: 0; font-size: 15px; }
+    .wb-main .muted { margin: 0; font-size: 13px; line-height: 1.7; color: var(--muted-foreground); }
+    .wb-main .muted code, .wb-main .muted strong { font-size: inherit; }
+    .wb-table-hint { margin: 0; font-size: 12px; color: var(--muted-foreground); }
+    .wb-main .cmd-table th, .wb-main .cmd-table td { padding: 9px 12px; }
+
+    /* ===== 复制交互：code 平静展示，悬浮所在行浮现复制按钮，点击后对号 + toast ===== */
+    .wb-copy { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 5px; max-width: 100%; }
+    .wb-copy code {
+      padding: 2px 7px;
+      border-radius: calc(var(--radius) * 0.6);
+      background: var(--muted);
+      transition: background-color 120ms ease;
+    }
+    tr:hover .wb-copy code { background: var(--accent); }
+    .wb-copy-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: none;
+      border-radius: calc(var(--radius) * 0.5);
+      background: none;
+      color: var(--muted-foreground);
+      cursor: pointer;
+      opacity: 0; /* 默认隐藏，悬浮行 / 聚焦时浮现 */
+      transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+    }
+    tr:hover .wb-copy-btn,
+    .wb-copy:focus-within .wb-copy-btn,
+    .wb-copy-btn.is-copied { opacity: 1; }
+    .wb-copy-btn:hover { background: var(--accent); color: var(--foreground); }
+    .wb-copy-btn .wb-check { display: none; }
+    .wb-copy-btn.is-copied { color: oklch(0.696 0.17 162.48); } /* 与主题翡翠预设同源的对号绿 */
+    .wb-copy-btn.is-copied .wb-check { display: block; }
+    .wb-copy-btn.is-copied .wb-copy-ic { display: none; }
+
+    /* ===== 功能未启用卡片（features.workbench=false；样式贴 theme-studio 居中卡片） ===== */
+    .wb-disabled { margin: 48px auto 0; max-width: 460px; text-align: center; padding: 28px 24px; }
+
+    /* ===== 复制 toast：basecoat toaster 的 data-align 只管横向（center=居中），
+       纵向是固定 bottom；这里把它从底部提到 header（56px）下方，实现「视口上方中央」 ===== */
+    .toaster[data-align="center"] { top: 8px; bottom: auto; gap: 8px; max-height: 300px; overflow: hidden; }
+    /* 分类语义色：成功=翡翠（与复制对号同源）、警告=琥珀、错误=主题 destructive；左侧色条 + 图标同色 */
+    .toast { border-left: 3px solid var(--border); }
+    .toast[data-category="success"] { border-left-color: oklch(0.696 0.17 162.48); }
+    .toast[data-category="success"] .toast-content > svg { color: oklch(0.696 0.17 162.48); }
+    .toast[data-category="warning"] { border-left-color: oklch(0.795 0.184 86.047); }
+    .toast[data-category="warning"] .toast-content > svg { color: oklch(0.795 0.184 86.047); }
+    .toast[data-category="error"] { border-left-color: var(--destructive); }
+    .toast[data-category="error"] .toast-content > svg { color: var(--destructive); }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <main class="wb-main">
+      <section class="card">
+        <div class="wb-head">
+          <h1 data-i18n="page.workbench.heading">原型工作台</h1>
+          <span id="modeBadge" class="badge"></span>
+        </div>
+        <p class="muted"><span data-i18n="page.workbench.intro">用自然语言 + opencode 命令开发原型。三步上手：① 在 zpm.config.yaml 的 sync.tables 填入表（可让 agent 用 dbx 探查）→ ② </span><code>zpm sync && zpm serve</code><span data-i18n="page.workbench.introTail"> → ③ opencode 里说「用 zpm-brainstorming 帮我想一个xx页面」。</span></p>
+        <p class="muted"><span data-i18n="page.workbench.syncedTables">已同步表：</span><strong id="tableCount">…</strong></p>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="page.workbench.cmdTitle">命令速查</h2>
+        <p class="wb-table-hint" data-i18n="page.workbench.cmdHint">悬浮命令所在行，点右侧图标复制</p>
+        <table class="cmd-table">
+          <thead><tr><th data-i18n="page.workbench.thCommand">命令</th><th data-i18n="page.workbench.thUsage">用途</th></tr></thead>
+          <tbody>
+            <tr><td><span class="wb-copy"><code>zpm-brainstorming</code><button class="wb-copy-btn" type="button" data-copy="zpm-brainstorming" aria-label="复制 zpm-brainstorming"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.brainstorming">头脑风暴：逐项确认页面效果后进入实现</td></tr>
+            <tr><td><span class="wb-copy"><code>zpm-new-page</code><button class="wb-copy-btn" type="button" data-copy="zpm-new-page" aria-label="复制 zpm-new-page"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.newPage">新建页面（描述你想要的效果即可）</td></tr>
+            <tr><td><span class="wb-copy"><code>zpm-new-page-tpl</code><button class="wb-copy-btn" type="button" data-copy="zpm-new-page-tpl" aria-label="复制 zpm-new-page-tpl"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.newPageTpl">从指定模板创建页面（list/form/detail/dashboard/board）</td></tr>
+            <tr><td><span class="wb-copy"><code>zpm-page-review</code><button class="wb-copy-btn" type="button" data-copy="zpm-page-review" aria-label="复制 zpm-page-review"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.pageReview">按宪法规则走查页面</td></tr>
+            <tr><td><span class="wb-copy"><code>zpm-try-component</code><button class="wb-copy-btn" type="button" data-copy="zpm-try-component" aria-label="复制 zpm-try-component"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.tryComponent">试验 basecoat 组件效果</td></tr>
+            <tr><td><span class="wb-copy"><code>zpm-asset-save / list / use</code><button class="wb-copy-btn" type="button" data-copy="zpm-asset-save / list / use" aria-label="复制 zpm-asset-save / list / use"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.assets">资产库：沉淀 / 浏览 / 复用（全局 ~/.zpm/assets）</td></tr>
+            <tr><td><span class="wb-copy"><code>zpm-lesson-save / list</code><button class="wb-copy-btn" type="button" data-copy="zpm-lesson-save / list" aria-label="复制 zpm-lesson-save / list"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.lessons">经验库：沉淀 / 浏览踩坑教训（全局 ~/.zpm/lessons）</td></tr>
+            <tr><td><span class="wb-copy"><code>zpm-law-propose / adopt</code><button class="wb-copy-btn" type="button" data-copy="zpm-law-propose / adopt" aria-label="复制 zpm-law-propose / adopt"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.law">宪法修正提案 / 采纳</td></tr>
+            <tr><td><span class="wb-copy"><code>zpm-db-info</code><button class="wb-copy-btn" type="button" data-copy="zpm-db-info" aria-label="复制 zpm-db-info"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td><td data-i18n="page.workbench.cmd.dbInfo">生成数据字典页</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card">
+        <h2 data-i18n="page.workbench.tplTitle">页面模板</h2>
+        <p class="wb-table-hint" data-i18n="page.workbench.tplHint">示例 prompt 同样悬浮复制，可直接贴进 opencode</p>
+        <table class="cmd-table">
+          <thead><tr><th data-i18n="page.workbench.thTemplate">模板</th><th data-i18n="page.workbench.thFit">适合</th><th data-i18n="page.workbench.thPrompt">示例 prompt</th></tr></thead>
+          <tbody>
+            <tr><td><code>crud</code></td><td data-i18n="page.workbench.tpl.crud">实体增删改查</td><td><span class="wb-copy"><code data-i18n="page.workbench.prompt.crud">用 crud 模板给我做一个 XX 管理页（增删改查 + 搜索筛选 + 导出）</code><button class="wb-copy-btn" type="button" data-copy="用 crud 模板给我做一个 XX 管理页（增删改查 + 搜索筛选 + 导出）" aria-label="复制示例 prompt（crud）"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td></tr>
+            <tr><td><code>tpl-list</code></td><td data-i18n="page.workbench.tpl.list">CRUD 列表</td><td><span class="wb-copy"><code data-i18n="page.workbench.prompt.list">用 tpl-list 给我做一个客户列表页，展示 name/阶段/金额</code><button class="wb-copy-btn" type="button" data-copy="用 tpl-list 给我做一个客户列表页，展示 name/阶段/金额" aria-label="复制示例 prompt（tpl-list）"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td></tr>
+            <tr><td><code>tpl-form</code></td><td data-i18n="page.workbench.tpl.form">新建/编辑表单</td><td><span class="wb-copy"><code data-i18n="page.workbench.prompt.form">用 tpl-form 做客户新建页</code><button class="wb-copy-btn" type="button" data-copy="用 tpl-form 做客户新建页" aria-label="复制示例 prompt（tpl-form）"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td></tr>
+            <tr><td><code>tpl-detail</code></td><td data-i18n="page.workbench.tpl.detail">单记录详情</td><td><span class="wb-copy"><code data-i18n="page.workbench.prompt.detail">用 tpl-detail 做客户详情页</code><button class="wb-copy-btn" type="button" data-copy="用 tpl-detail 做客户详情页" aria-label="复制示例 prompt（tpl-detail）"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td></tr>
+            <tr><td><code>tpl-dashboard</code></td><td data-i18n="page.workbench.tpl.dashboard">KPI + 图表</td><td><span class="wb-copy"><code data-i18n="page.workbench.prompt.dashboard">用 tpl-dashboard 做销售概览</code><button class="wb-copy-btn" type="button" data-copy="用 tpl-dashboard 做销售概览" aria-label="复制示例 prompt（tpl-dashboard）"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td></tr>
+            <tr><td><code>tpl-board</code></td><td data-i18n="page.workbench.tpl.board">看板拖拽</td><td><span class="wb-copy"><code data-i18n="page.workbench.prompt.board">用 tpl-board 做商机看板，按阶段分列</code><button class="wb-copy-btn" type="button" data-copy="用 tpl-board 做商机看板，按阶段分列" aria-label="复制示例 prompt（tpl-board）"><svg class="wb-copy-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9h11v11H9z"/><path d="M5 15H4V4h11v1"/></svg><svg class="wb-check" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg></button></span></td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+
+  <!-- basecoat toaster：复制反馈（data-align=center = 视口横向居中；纵向提到顶部见页内样式） -->
+  <div id="toaster" class="toaster" data-align="center"></div>
+
+  <script type="module">
+    import { mountLayout } from '/layout/layout.js';
+    import { getJSON } from '/app.js';
+    import { ensureI18n, t } from '/i18n.js';
+
+    /* ===== 复制交互 =====
+     * 优先 navigator.clipboard.writeText；不可用/失败时降级 execCommand('copy')。
+     * 成功：按钮短暂切换绿色对号（1.2s），并在视口上方中央浮出 basecoat success toast；
+     * 失败：toast error。事件委托挂在 main 上，表格为静态标记无需重绑定。 */
+    const COPY_RESET_MS = 1200;
+
+    function legacyCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      ta.remove();
+      return ok;
+    }
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch { /* 非安全上下文 / 权限拒绝 → 降级 */ }
+      return legacyCopy(text);
+    }
+
+    function showToast(category, title, description) {
+      const toaster = document.getElementById('toaster');
+      if (!toaster || typeof toaster.toast !== 'function') return;
+      // 堆叠上限 3 条：连点时先关最旧的（column-reverse 下 overflow:hidden 会裁掉最新一条，
+      // 故不能只靠 CSS 裁剪，需 JS 关旧保新）
+      const live = toaster.querySelectorAll('.toast:not([aria-hidden="true"])');
+      for (let i = 0; i + 3 <= live.length; i++) {
+        if (typeof live[i].close === 'function') live[i].close();
+      }
+      toaster.toast({ category, title, description });
+    }
+
+    function flashCopied(btn) {
+      btn.classList.add('is-copied');
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(() => btn.classList.remove('is-copied'), COPY_RESET_MS);
+    }
+
+    document.querySelector('.wb-main').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-copy]');
+      if (!btn) return;
+      const text = btn.dataset.copy;
+      if (await copyText(text)) {
+        flashCopied(btn);
+        showToast('success', t('page.workbench.toastCopied', '已复制'), text);
+      } else {
+        showToast('error', t('page.workbench.toastCopyFail', '复制失败'), text);
+      }
+    });
+
+    /* ===== 功能开关门卫：features.workbench === false → 渲染未启用卡片并隐藏主内容 =====
+     * 与 theme-studio.html 同款模式：zpm.config.yaml 的 features 节缺省 true（fail-open：
+     * /api/_meta 拉取失败或无 features 字段都照常进入工作台）；仅显式 false 时隐藏
+     * #pageContent、渲染居中卡片，不再 boot。 */
+    async function featureGate() {
+      let meta = null;
+      try {
+        meta = await getJSON('/api/_meta');
+      } catch { /* fail-open */ }
+      if (!(meta && meta.features && meta.features.workbench === false)) return false;
+      const content = document.getElementById('pageContent');
+      if (content) content.style.display = 'none';
+      const card = document.createElement('section');
+      card.className = 'card wb-disabled';
+      card.setAttribute('role', 'status');
+      const head = document.createElement('p');
+      head.style.cssText = 'margin:0 0 8px;font-size:14px;font-weight:600;';
+      head.textContent = t('page.workbench.disabledTitle', '工作台未启用');
+      const tip = document.createElement('p');
+      tip.style.cssText = 'margin:0;font-size:13px;color:var(--muted-foreground);';
+      tip.textContent = t('page.workbench.disabledTip', '在 zpm.config.yaml 的 features.workbench 设为 true 后重启 zpm serve');
+      card.append(head, tip);
+      document.body.appendChild(card);
+      return true;
+    }
+
+    async function boot() {
+      try {
+        const m = await getJSON('/api/_meta');
+        document.getElementById('tableCount').textContent = `${m.tables.length} ${t('page.workbench.tableCountUnit', '张')}`;
+        const badge = document.getElementById('modeBadge');
+        badge.textContent = m.writeMode === 'real' ? t('page.workbench.badgeReal', '写模式：real') : t('page.workbench.badgeSimulated', '演示模式（write 未开启）');
+      } catch { /* 概览信息拉取失败不阻塞页面 */ }
+    }
+
+    /* ===== 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） ===== */
+    function applyStaticI18n() {
+      document.title = t('page.workbench.title', '工作台');
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim());
+      }
+      // 示例 prompt 可见文案随语言更新，复制负载 data-copy 与其保持同源（命令名不翻译，不受影响）
+      for (const code of document.querySelectorAll('.wb-copy code[data-i18n]')) {
+        const btn = code.parentElement.querySelector('.wb-copy-btn');
+        if (btn) btn.dataset.copy = code.textContent;
+      }
+      // 复制按钮 aria-label：命令行 = 复制 + 命令名；模板行（行首列 code 为 tpl-*）= 复制示例 prompt +（模板名）
+      for (const btn of document.querySelectorAll('.wb-copy-btn')) {
+        const rowFirstCode = btn.closest('tr') ? btn.closest('tr').querySelector('td code') : null;
+        btn.setAttribute('aria-label', rowFirstCode && rowFirstCode.textContent.startsWith('tpl-')
+          ? `${t('page.workbench.ariaCopyPrompt', '复制示例 prompt')}（${rowFirstCode.textContent}）`
+          : `${t('page.workbench.ariaCopy', '复制')} ${btn.dataset.copy}`);
+      }
+    }
+
+    (async () => {
+      await ensureI18n();        // 幂等；locale 就绪后再渲染 UI 文案（featureGate/boot 的 _meta 数据拉取在其后）
+      applyStaticI18n();
+      if (await featureGate()) return;
+      mountLayout({ active: 'workbench', title: t('page.workbench.title', '工作台') });
+      boot();
+    })();
+  </script>
+</body>
+</html>

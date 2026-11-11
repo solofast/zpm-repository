@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>详情页模板</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat.cdn.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+  <script src="/vendor/mustache/mustache.min.js"></script>
+  <script src="/vendor/dayjs/dayjs.min.js"></script>
+</head>
+<body>
+  <div id="pageContent">
+    <!-- 适配：改 TABLE / DETAIL_FIELDS / STATUS_FIELD / STATUS_OPTIONS / REL（关联子表）；
+         USE_DEMO 确认接入真实表后改 false 并删除 demo 假数据 -->
+    <main style="padding:16px 24px 40px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        <h1 style="font-size:20px;margin:0;" data-i18n="tpl.detail.title">详情页模板</h1>
+        <span style="flex:1;"></span>
+        <!-- 适配：默认浏览器历史返回；需要固定跳列表页时改为 location.href = '/你的列表页.html' -->
+        <button id="btnBack" type="button" class="btn" data-variant="outline" data-i18n="tpl.detail.back">返回</button>
+      </div>
+
+      <!-- 信息卡（DescriptionList 风格）+ 状态操作 -->
+      <div class="card" style="max-width:760px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;min-width:0;">
+            <span id="detailTitle" data-i18n="tpl.detail.loading">加载中…</span>
+          </div>
+          <!-- 状态操作：选择 + 保存（PATCH） -->
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="field" style="flex-direction:row;align-items:center;gap:8px;width:auto;">
+              <label for="statusSelect" style="font-size:12px;color:var(--muted-foreground);" data-i18n="tpl.detail.statusLabel">状态</label>
+              <select id="statusSelect" class="select"></select>
+            </div>
+            <button id="btnSaveStatus" type="button" class="btn" data-i18n="tpl.detail.save">保存</button>
+            <span id="statusNote" style="display:none;font-size:12px;color:var(--muted-foreground);"></span>
+          </div>
+        </div>
+        <!-- 信息字段：mustache 渲染（{{var}} 默认 HTML 转义；数据值严禁放 {{{ }}}） -->
+        <div id="detailBody" style="margin-top:14px;"></div>
+      </div>
+
+      <!-- 关联明细表（where=外键:eq:id） -->
+      <div class="card" style="max-width:760px;margin-top:14px;padding:0;">
+        <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);font-size:14px;font-weight:700;">
+          <span id="relTitle" data-i18n="tpl.detail.relTitle">关联明细</span>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <!-- 适配：替换明细列 -->
+                <th data-i18n="tpl.detail.colContent">内容</th>
+                <th data-i18n="tpl.detail.colStatus">状态</th>
+                <th data-i18n="tpl.detail.colCreatedAt">创建时间</th>
+              </tr>
+            </thead>
+            <tbody id="relTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 信息卡字段模板：{{#fields}} 循环输出 label/value（value 已在 JS 侧格式化并经 {{var}} 转义） -->
+  <script type="text/template" id="tplDetail">
+    <dl style="display:grid;grid-template-columns:auto 1fr;gap:10px 18px;margin:0;font-size:13px;">
+      {{#fields}}
+      <dt style="color:var(--muted-foreground);">{{label}}</dt>
+      <dd style="margin:0;word-break:break-all;">{{value}}</dd>
+      {{/fields}}
+    </dl>
+  </script>
+
+  <!-- 明细行模板（同样 {{var}} 转义） -->
+  <script type="text/template" id="tplRelRow">
+    {{#rows}}
+    <tr>
+      <td style="font-weight:600;">{{content}}</td>
+      <td><span class="badge">{{statusLabel}}</span></td>
+      <td style="color:var(--muted-foreground);">{{createdAt}}</td>
+    </tr>
+    {{/rows}}
+  </script>
+
+  <script type="module">
+    /* ============================================================
+     * 详情页模板（tpl-detail）：单记录 + 返回
+     * 用法：详情页.html?id=<记录id>
+     * 适配三步（复制到 pages/ 后）：
+     *   1) 改 TABLE / DETAIL_FIELDS / STATUS_FIELD / STATUS_OPTIONS
+     *   2) 改 REL（关联子表 + 外键 + 列），即 where=外键:eq:id 的明细查询
+     *   3) USE_DEMO 改 false 并删除 demo 数据
+     * ============================================================ */
+    import { getJSON, mountErrorBar, formatDate, afterInject } from '/app.js';
+    import { ensureI18n, t } from '/i18n.js';
+    import { mountLayout } from '/layout/layout.js';
+
+    const TABLE = 'demo_rows';           // 适配：主表表名
+    const STATUS_FIELD = 'status';       // 适配：状态字段名（PATCH 的目标字段）
+    const USE_DEMO = true;               // 适配：接入真实表后改 false
+
+    // 适配：信息卡字段（format: 'date' 用 dayjs 格式化；其余原样展示，空值统一「—」）；labelKey 为 locales 的 UI 文案 key
+    const DETAIL_FIELDS = [
+      { labelKey: 'tpl.detail.fName', label: '名称', key: 'name' },
+      { labelKey: 'tpl.detail.fOwner', label: '负责人', key: 'owner' },
+      { labelKey: 'tpl.detail.fAmount', label: '金额（万元）', key: 'amount', format: 'wan' },
+      { labelKey: 'tpl.detail.fCreatedAt', label: '创建时间', key: 'created_at', format: 'date' },
+      { labelKey: 'tpl.detail.fUpdatedAt', label: '更新时间', key: 'updated_at', format: 'datetime' },
+    ];
+
+    // 适配：状态枚举（select 选项 + 明细行徽标文案）；labelKey 为 locales 的 UI 文案 key
+    const STATUS_OPTIONS = [
+      { key: 'open', labelKey: 'tpl.detail.stateOpen', label: '进行中' },
+      { key: 'done', labelKey: 'tpl.detail.stateDone', label: '已完成' },
+      { key: 'archived', labelKey: 'tpl.detail.stateArchived', label: '已归档' },
+    ];
+
+    // 适配：关联明细（子表表名 + 外键字段 + 列映射）；titleKey 为 locales 的 UI 文案 key
+    const REL = {
+      table: 'demo_child',
+      foreignKey: 'demo_id',
+      titleKey: 'tpl.detail.relTitle',
+      title: '关联明细',
+      columns: { content: 'name', status: 'status', created_at: 'created_at' },
+    };
+
+    /* demo 假数据：仅占位示范；正式页面严禁保留 */
+    const demo_row = { id: 'd1', name: '示例记录 A', status: 'open', owner: '张三', amount: 32000000000, created_at: '2026-08-01T08:00:00.000Z', updated_at: '2026-10-20T11:00:00.000Z' };
+    const demo_children = [
+      { id: 'c1', name: '跟进电话：初次沟通', status: 'done', created_at: '2026-08-02T10:00:00.000Z' },
+      { id: 'c2', name: '寄送资料', status: 'open', created_at: '2026-08-05T15:30:00.000Z' },
+    ];
+
+    /* ===== DOM / 错误条 ===== */
+    const $ = (id) => document.getElementById(id);
+    const error = mountErrorBar();
+
+    const recordId = (new URLSearchParams(window.location.search).get('id') || '').trim();
+
+    function statusLabel(key) {
+      const opt = STATUS_OPTIONS.find((o) => o.key === key);
+      return (opt && t(opt.labelKey, opt.label)) || key || '—';
+    }
+
+    // 字段格式化：日期走 dayjs；金额沿用 micros ÷ 1e10 = 万元口径
+    function formatField(row, f) {
+      const v = row[f.key];
+      if (f.format === 'date' || f.format === 'datetime') return formatDate(v, f.format === 'datetime' ? 'YYYY-MM-DD HH:mm' : 'YYYY-MM-DD');
+      if (f.format === 'wan') {
+        if (typeof v !== 'number' || !isFinite(v)) return '—';
+        return String(Math.round((v / 1e10) * 10) / 10);
+      }
+      return v == null || v === '' ? '—' : String(v);
+    }
+
+    /* ===== 加载主记录：真实模式 GET /api/<表>/<id>；演示模式用假数据 ===== */
+    async function loadRecord() {
+      if (USE_DEMO) return demo_row;
+      const json = await getJSON('/api/' + TABLE + '/' + encodeURIComponent(recordId));
+      return json && typeof json === 'object' ? json : null;
+    }
+
+    function renderDetail(row) {
+      $('detailTitle').textContent = row.name || TABLE + t('tpl.detail.titleSuffix', '详情');
+      const fields = DETAIL_FIELDS.map((f) => ({ label: t(f.labelKey, f.label), value: formatField(row, f) }));
+      // Mustache 的 {{var}} 已转义，innerHTML 注入安全
+      $('detailBody').innerHTML = Mustache.render($('tplDetail').textContent, { fields });
+      afterInject($('detailBody')); // 注入后重建 basecoat 交互组件
+      $('statusSelect').value = row[STATUS_FIELD] || '';
+    }
+
+    /* ===== 关联明细：GET /api/<子表>?where=外键:eq:id ===== */
+    async function loadRelRows() {
+      if (USE_DEMO) return demo_children;
+      const url = '/api/' + REL.table + '?where=' + REL.foreignKey + ':eq:' + encodeURIComponent(recordId)
+        + '&sort=-created_at&page=1&pageSize=20';
+      const json = await getJSON(url);
+      return Array.isArray(json.data) ? json.data : [];
+    }
+
+    function renderRelRows(rows) {
+      const tbody = $('relTbody');
+      tbody.textContent = '';
+      if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 3;
+        td.textContent = t('tpl.detail.emptyRel', '暂无明细');
+        td.style.cssText = 'padding:18px 16px;text-align:center;color:var(--muted-foreground);';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+      const views = rows.map((r) => ({
+        content: (r[REL.columns.content] != null && r[REL.columns.content] !== '') ? String(r[REL.columns.content]) : '—',
+        statusLabel: statusLabel(r[REL.columns.status]),
+        createdAt: formatDate(r[REL.columns.created_at], 'YYYY-MM-DD HH:mm'),
+      }));
+      // mustache {{var}} 转义后注入
+      tbody.innerHTML = Mustache.render($('tplRelRow').textContent, { rows: views });
+      afterInject(tbody); // 注入后重建 basecoat 交互组件
+    }
+
+    /* ===== 状态操作：PATCH /api/<表>/<id>（仅 write.tables 白名单内的表可写） ===== */
+    async function saveStatus(row) {
+      const value = $('statusSelect').value;
+      if (USE_DEMO) {
+        row[STATUS_FIELD] = value; // 演示：只改本地状态
+        setNote(t('tpl.detail.demoSaved', '演示模式：已模拟保存，不会真正写入'));
+        return;
+      }
+      let res;
+      try {
+        res = await fetch('/api/' + TABLE + '/' + encodeURIComponent(row.id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [STATUS_FIELD]: value }),
+        });
+      } catch {
+        throw new Error(t('tpl.detail.networkError', '网络请求失败'));
+      }
+      if (!res.ok) {
+        let detail = 'HTTP ' + res.status;
+        try { const j = await res.json(); if (j && j.error) detail = j.error; } catch { /* 忽略 */ }
+        throw new Error(detail);
+      }
+      await res.json().catch(() => null); // 消费响应体
+      setNote(t('tpl.detail.statusSaved', '状态已保存'));
+    }
+
+    let noteTimer = null;
+    function setNote(msg) {
+      const el = $('statusNote');
+      el.textContent = msg;
+      el.style.display = '';
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
+    }
+
+    $('btnSaveStatus').addEventListener('click', async () => {
+      if (!currentRow) return;
+      const btn = $('btnSaveStatus');
+      btn.disabled = true;
+      btn.textContent = t('tpl.detail.saving', '保存中…');
+      try {
+        await saveStatus(currentRow);
+      } catch (err) {
+        error.show(t('tpl.detail.saveFailedPrefix', '状态保存失败：') + (err && err.message ? err.message : t('tpl.detail.unknownError', '未知错误')));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = t('tpl.detail.save', '保存');
+      }
+    });
+
+    // 返回：优先浏览器历史；无历史（直接打开）时回工作台
+    $('btnBack').addEventListener('click', () => {
+      if (history.length > 1) history.back();
+      else location.href = '/index.html';
+    });
+
+    /* ===== 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） ===== */
+    function applyStaticI18n() {
+      document.title = t('tpl.detail.title', '详情页模板');
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim());
+      }
+    }
+
+    /* ===== 启动：locale 就绪后再渲染 UI 文案 ===== */
+    let currentRow = null;
+    (async () => {
+      await ensureI18n();
+      applyStaticI18n();
+      if (!USE_DEMO && !recordId) {
+        error.show(t('tpl.detail.missingId', '缺少记录 id：请以 详情页.html?id=<记录id> 方式打开。'));
+        mountLayout({ active: null, title: t('tpl.detail.title', '详情页模板') });
+        return;
+      }
+      try {
+        currentRow = await loadRecord();
+        if (!currentRow || !currentRow.id) throw new Error(t('tpl.detail.notFound', '记录不存在或已删除'));
+        renderDetail(currentRow);
+      } catch (err) {
+        $('detailTitle').textContent = t('tpl.detail.loadFailed', '加载失败');
+        error.show(t('tpl.detail.loadFailedPrefix', '详情加载失败：') + err.message);
+      }
+      try {
+        $('relTitle').textContent = t(REL.titleKey, REL.title);
+        renderRelRows(await loadRelRows());
+      } catch (err) {
+        error.show(t('tpl.detail.relFailedPrefix', '关联明细加载失败：') + err.message);
+      }
+      mountLayout({ active: null, title: t('tpl.detail.title', '详情页模板') });
+    })();
+  </script>
+</body>
+</html>

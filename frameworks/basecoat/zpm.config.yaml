@@ -1,0 +1,20 @@
+name: {{name}}
+server: { port: {{port}}, theme: ./themes/{{theme}}.css }
+datasource:
+  type: postgres
+  host: {{host}}
+  port: {{dbport}}
+  database: {{database}}
+  user: {{user}}
+  password: {{password}}
+target: { type: sqlite, file: data/app.db }
+sync:
+  tables: []   # 待同步表；用 opencode + dbx 探查数据源后由 agent 补充，见 AGENTS.md
+write:
+  enabled: false
+  mode: simulated
+  tables: []
+# 页面功能开关（可选；缺省全 true，fail-open；显式 false 隐藏对应页面与菜单入口）
+# features:
+#   db_info: true       # 数据字典页 + 菜单入口
+#   theme_studio: true  # 主题配置页 + 菜单入口

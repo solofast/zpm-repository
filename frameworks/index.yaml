@@ -1,0 +1,6 @@
+generated_at: 2026-11-10T14:27:18Z
+frameworks:
+- name: basecoat
+  version: 0.1.0
+  description: 面向产品经理的 basecoat 原型工作台
+  dir: basecoat

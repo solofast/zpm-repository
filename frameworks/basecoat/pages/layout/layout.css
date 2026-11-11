@@ -1,0 +1,345 @@
+/* basecoat-pm 应用外壳公共样式（固定 sidebar / 常驻 header / 内容区独立滚动 / dropdown / 抽屉 / KPI 卡）
+   规则：颜色一律直接引用主题 tokens 的 var(--x)。token 值为 oklch（含 alpha 写法如
+   oklch(1 0 0 / 10%)），proto-crm 时代的 hsl 三元组包装在 oklch token 下会失效，禁止使用；
+   半透明变体用 color-mix(in oklab, var(--x) N%, transparent) 现场派生。
+   零 CDN、零外部字体、零图片；组件交互（dropdown / 主题切换）依赖 /vendor/basecoat。
+   本文件是外壳样式唯一事实源。 */
+
+/* ---- 主题图标 utility 补充 ----
+   basecoat-lyra.cdn.min.css（官方整包）不含 hidden / block / dark:block / dark:hidden；
+   主题切换按钮依赖这几个类，
+   这里按 basecoat（Tailwind）同名约定补齐（.dark 类由 basecoat.theme.toggle 挂到 <html>）。 */
+.hidden { display: none; }
+.block { display: block; }
+.dark .dark\:block { display: block; }
+.dark .dark\:hidden { display: none; }
+
+/* ---- 固定外壳骨架 ----
+   html/body 收掉页面级滚动，外壳唯一滚动容器是内容区 .lx-content：
+   左列 sidebar 固定宽全高、右列上 header 常驻行下内容区，均不随内容滚动。
+   lx-html 类由 layout.js 挂载外壳时加到 <html>（与外壳成对出现，
+   未挂外壳的裸页面不受影响，仍走正常文档流）。 */
+html.lx-html { height: 100%; overflow: hidden; }
+/* 移动端地址栏伸缩时视口高度跟随（dvh），不支持则回退上面 100% */
+@supports (height: 100dvh) {
+  html.lx-html { height: 100dvh; }
+}
+
+.lx-body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden; /* 与 html 规则双保险：滚动只发生在 .lx-content 内 */
+  display: flex;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* ---- 侧栏（固定宽全高列；浅色卡片化：sidebar 系 token + 圆角菜单项 + pill 激活态） ---- */
+.lx-sidebar {
+  width: 232px;
+  flex: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--sidebar);
+  border-right: 1px solid var(--sidebar-border);
+}
+.lx-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--sidebar-border);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+}
+.lx-logo-mark {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--sidebar-primary);
+  color: var(--sidebar-primary-foreground);
+}
+.lx-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  min-height: 0;   /* 菜单超出侧栏高度时允许收缩，让 overflow-y 生效 */
+  overflow-y: auto;
+}
+.lx-nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: 13px;
+  color: var(--muted-foreground);
+  text-decoration: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.lx-nav a:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+.lx-nav a.is-active { background: var(--sidebar-accent); color: var(--sidebar-primary); font-weight: 600; }
+.lx-sidebar-foot {
+  margin-top: auto;
+  padding: 14px 18px;
+  border-top: 1px solid var(--sidebar-border);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+/* ---- 主区与 header ---- */
+.lx-main-wrap { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* header 为固定骨架的常驻行（不再 position: sticky，本身不参与滚动） */
+.lx-header {
+  flex: none;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 20px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.lx-title { margin: 0; font-size: 15px; font-weight: 700; }
+.lx-spacer { flex: 1; }
+/* 外壳唯一滚动容器：内容超高时仅此区域出现滚动条，sidebar / header 纹丝不动。
+   注意：勿在本区域祖先链上加 transform / filter / will-change / contain，
+   否则会让页面内 position:fixed 元素（错误条、dialog 等）改挂容器或被裁剪 */
+.lx-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain; /* 滚到尽头不外溢，防止意外带动外层 */
+}
+.lx-content h1 { margin: 16px 24px 0; font-size: 18px; }
+
+.lx-search {
+  width: 220px;
+  max-width: 38vw;
+  box-sizing: border-box;
+  padding: 7px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  outline: none;
+}
+.lx-search:focus { border-color: var(--ring); }
+
+.lx-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.lx-icon-btn:hover { background: var(--secondary); color: var(--foreground); }
+.lx-hamburger { display: none; }
+
+/* ---- 下拉（basecoat dropdown-menu：开合 / 键盘 / aria 由 all.min.js 组件行为负责，
+   这里只补外壳内的定位（右对齐）与外观（card 底 + token 圆角阴影）。
+   basecoat 的 [data-popover] 无默认偏移与外观，需按壳内语境显式给出） ---- */
+.lx-header .dropdown-menu > [data-popover] {
+  left: auto;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 190px;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px color-mix(in oklab, var(--foreground) 14%, transparent);
+}
+.lx-dd-menu { outline: none; }
+.lx-header .dropdown-menu .lx-dd-item,
+.lx-header .dropdown-menu [role='menuitem'] {
+  padding: 8px 10px;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: none;
+  font-size: 13px;
+  color: var(--foreground);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.lx-header .dropdown-menu .lx-dd-item:hover,
+.lx-header .dropdown-menu [role='menuitem']:hover { background: var(--secondary); }
+.lx-dd-item.is-muted { color: var(--muted-foreground); cursor: default; }
+.lx-dd-item.is-muted:hover { background: none; }
+.lx-dd-item.is-disabled { color: var(--muted-foreground); opacity: 0.6; }
+.lx-dd-header { padding: 8px 10px 10px; margin-bottom: 6px; border-bottom: 1px solid var(--border); }
+.lx-dd-name { font-size: 13px; font-weight: 600; }
+.lx-dd-sub { margin-top: 2px; font-size: 11px; color: var(--muted-foreground); }
+
+/* ---- 抽屉遮罩 / 轻提示（lx 自实现保留，颜色 token 化） ---- */
+.lx-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: color-mix(in oklab, var(--foreground) 35%, transparent);
+}
+.lx-toast {
+  display: none;
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 70;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  background: var(--foreground);
+  color: var(--background);
+  box-shadow: 0 8px 24px color-mix(in oklab, var(--foreground) 20%, transparent);
+}
+
+/* ---- 公共卡片（KPI 等） ---- */
+.lx-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+a.lx-card { display: block; text-decoration: none; color: inherit; }
+a.lx-card:hover, .lx-card.is-clickable:hover { border-color: var(--ring); }
+.lx-kpi-row { display: flex; flex-wrap: wrap; gap: 14px; }
+.lx-kpi { flex: 1 1 160px; min-width: 160px; }
+.lx-kpi-label { font-size: 12px; color: var(--muted-foreground); }
+.lx-kpi-value { margin-top: 6px; font-size: 24px; font-weight: 700; line-height: 1.2; }
+
+/* ---- 窄屏：侧栏折叠为抽屉（内容区独立滚动不受断点影响） ---- */
+@media (max-width: 1023.98px) {
+  .lx-hamburger { display: inline-flex; }
+  .lx-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: 0 0 40px color-mix(in oklab, var(--foreground) 20%, transparent);
+  }
+  .lx-sidebar.is-open { transform: translateX(0); }
+  .lx-overlay.is-open { display: block; }
+  .lx-search { width: 150px; }
+}
+@media (min-width: 1024px) {
+  .lx-overlay { display: none !important; }
+}
+
+/* ---- 工作台引导页 / 表单模板配套样式（颜色一律直接引用主题 tokens 的 var(--x)） ---- */
+.home {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 20px 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.home h1 { margin: 0 0 6px; font-size: 20px; }
+.home h2 { margin: 0 0 10px; font-size: 15px; }
+.home .muted { margin: 6px 0 0; font-size: 13px; line-height: 1.7; color: var(--muted-foreground); }
+
+.cmd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cmd-table th, .cmd-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.cmd-table th { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.cmd-table tr:last-child td { border-bottom: none; }
+code.copyable {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: calc(var(--radius) * 0.6);
+  background: var(--muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+code.copyable:hover { background: var(--accent); }
+code.copyable.copied { color: var(--primary); }
+
+.note {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.form-page { max-width: 640px; margin: 0 auto; padding: 20px 24px 40px; }
+.form-page h1 { margin: 0 0 14px; font-size: 20px; }
+.form-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+.form-card .field { display: flex; flex-direction: column; gap: 12px; }
+.form-card .field label { font-size: 13px; color: var(--foreground); }
+.form-card .field-error { margin: 0; font-size: 12px; color: var(--destructive); }
+.form-actions { display: flex; gap: 12px; margin-top: 4px; }
+
+/* ---- basecoat 表格容器（tpl-list / tpl-detail 等 table-wrap 结构用） ---- */
+.table-wrap { width: 100%; overflow-x: auto; }
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* ---- 组件 token 对齐 ----
+   basecoat 的 .badge 圆角走独立胶囊变量 --radius-4xl（2rem），不随 --radius 联动，
+   导致直角主题（如 Lyra --radius: 0）下徽章仍是胶囊。这里把徽章/标签类圆角接入
+   --tag-radius：主题文件可显式声明（themes/*.css），主题配置页可实时调节；
+   未声明时回退 basecoat 原值，官方组件观感不变。 */
+.badge { border-radius: var(--tag-radius, var(--radius-4xl)); }
+
+/* ---- 卡片内距（PM 约定，2026-11-05，细则见 knowledge/rules/card.md）----
+   basecoat 整包 .card 仅声明 padding-block，左右内距为 0，内容直接填充即贴边；
+   纯视觉问题、DOM 断言查不出。全局层统一显式四边内距，页面与模板禁再散写。 */
+.card { padding: 18px 26px; }
+
+/* ---- 表单组件去 focus 高亮（PM 约定，2026-10-31）----
+   去掉 input / combobox / select 等聚焦时的外层高亮边框（basecoat 的
+   focus-visible ring：--tw-ring-shadow 注入 box-shadow 变量链 + border-color 变 ring）。
+   仅中和 ring 两变量并把 border 拉回静息值，不动整条 box-shadow（避免误杀普通阴影）。
+   本文件在 basecoat 之后加载，同特异性后者胜，无需 !important。
+   已知 tradeoff：Tab 键盘导航失去视觉焦点指示，恢复高亮删此节即可。 */
+.input:focus-visible,
+.combobox .input:focus-visible,
+select.select:focus-visible,
+.field > :is(input, select, textarea):focus-visible {
+  outline: none;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-ring-color: transparent;
+  border-color: var(--input);
+}
+
+/* 外壳快捷搜索框同约定（本文件上方 .lx-search:focus 的 focus 边框高亮一并去掉，
+   恢复静息边框 var(--border)） */
+.lx-search:focus { border-color: var(--border); }

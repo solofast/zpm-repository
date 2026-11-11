@@ -1,0 +1,13 @@
+{
+  "libraries": [
+    { "name": "basecoat-css", "version": "1.1.0", "file": "basecoat/basecoat.cdn.min.css", "license": "MIT", "url": "https://cdn.jsdelivr.net/npm/basecoat-css@1.1.0/dist/basecoat.cdn.min.css" },
+    { "name": "basecoat-js", "version": "1.1.0", "file": "basecoat/all.min.js", "license": "MIT", "url": "https://cdn.jsdelivr.net/npm/basecoat-css@1.1.0/dist/js/all.min.js" },
+    { "name": "mustache", "version": "4.2.0", "file": "mustache/mustache.min.js", "license": "MIT", "url": "https://registry.npmmirror.com/mustache/4.2.0/files/mustache.min.js" },
+    { "name": "echarts", "version": "5.5.1", "file": "echarts/echarts.min.js", "license": "Apache-2.0", "url": "https://registry.npmmirror.com/echarts/5.5.1/files/dist/echarts.min.js" },
+    { "name": "dayjs", "version": "1.11.13", "file": "dayjs/dayjs.min.js", "license": "MIT", "url": "https://registry.npmmirror.com/dayjs/1.11.13/files/dayjs.min.js" },
+    { "name": "xlsx", "version": "0.18.5", "file": "xlsx/xlsx.full.min.js", "license": "Apache-2.0", "url": "https://registry.npmmirror.com/xlsx/0.18.5/files/dist/xlsx.full.min.js" },
+    { "name": "sortablejs", "version": "1.15.3", "file": "sortable/Sortable.min.js", "license": "MIT", "url": "https://registry.npmmirror.com/sortablejs/1.15.3/files/Sortable.min.js" },
+    { "name": "remixicon", "version": "4.5.0", "file": "remixicon/remixicon.css", "license": "Apache-2.0", "url": "https://registry.npmmirror.com/remixicon/4.5.0/files/fonts/remixicon.css" },
+    { "name": "remixicon-font", "version": "4.5.0", "file": "remixicon/remixicon.woff2", "license": "Apache-2.0", "url": "https://registry.npmmirror.com/remixicon/4.5.0/files/fonts/remixicon.woff2" }
+  ]
+}

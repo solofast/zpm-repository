@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>仪表盘模板</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat.cdn.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+  <script src="/vendor/echarts/echarts.min.js"></script>
+  <script src="/vendor/dayjs/dayjs.min.js"></script>
+</head>
+<body>
+  <div id="pageContent">
+    <!-- 适配：改 TABLE / TREND_FIELD（时间字段）/ CATEGORY_FIELD（分类字段）与 CATEGORY_LABELS；
+         USE_DEMO 确认接入真实表后改 false 并删除 demo_rows；KPI 换成你的统计口径 -->
+    <main style="padding:16px 24px 40px;">
+      <h1 style="font-size:20px;margin:0 0 14px;" data-i18n="tpl.dashboard.title">仪表盘模板</h1>
+
+      <!-- KPI 卡 ×3：数值来自 API total（pageSize=1 拿 total），演示模式来自 demo_rows -->
+      <section id="kpiRow" style="display:flex;gap:14px;flex-wrap:wrap;"></section>
+
+      <!-- 图表：折线（时间趋势）+ 环形（分类占比），数据客户端聚合；图表颜色全部走 cssColor token -->
+      <section style="display:flex;gap:14px;align-items:stretch;flex-wrap:wrap;margin-top:14px;">
+        <div class="card" style="flex:3 1 520px;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;">
+            <span id="trendTitle" data-i18n="tpl.dashboard.trendTitle">近 30 天数量趋势</span>
+          </div>
+          <div id="trendChart" style="height:280px;margin-top:8px;"></div>
+          <div id="trendNote" hidden style="padding:10px 0 4px;font-size:12px;color:var(--muted-foreground);" data-i18n="tpl.dashboard.emptyTrend">统计区间内暂无数据</div>
+        </div>
+        <div class="card" style="flex:2 1 320px;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;">
+            <span id="pieTitle" data-i18n="tpl.dashboard.pieTitle">分类占比</span>
+          </div>
+          <div id="pieChart" style="height:280px;margin-top:8px;"></div>
+          <div id="pieNote" hidden style="padding:10px 0 4px;font-size:12px;color:var(--muted-foreground);" data-i18n="tpl.dashboard.emptyPie">暂无数据</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module">
+    /* ============================================================
+     * 仪表盘模板（tpl-dashboard）：KPI 卡行 + echarts 折线/环形
+     * 说明：/api 不做聚合，图表数据按「拉全量 → 客户端分组统计」实现（小数据量原型场景够用）
+     * 图表颜色一律 cssColor('--chart-N') / cssColor('--primary') 等 token 读取，
+     * 禁止写死色值——深浅色主题切换后图表自动跟随。
+     * ============================================================ */
+    import { fetchAll, mountErrorBar, cssColor } from '/app.js';
+    import { ensureI18n, t } from '/i18n.js';
+    import { mountLayout } from '/layout/layout.js';
+
+    const TABLE = 'demo_rows';               // 适配：替换表名
+    const TREND_FIELD = 'created_at';        // 适配：时间趋势字段
+    const CATEGORY_FIELD = 'category';       // 适配：分类占比字段
+    const TREND_DAYS = 30;
+    const USE_DEMO = true;                   // 适配：接入真实表后改 false
+
+    // 适配：分类枚举 → 中文标签（环形图图例；枚举外的取值归入「其他」）
+    // i18n：各枚举的英文文案登记在 locales（key = tpl.dashboard.cat.<枚举>），缺该 key 回退此中文
+    const CATEGORY_LABELS = {
+      type_a: '类型 A',
+      type_b: '类型 B',
+      type_c: '类型 C',
+    };
+
+    // KPI 卡配置（label + 过滤函数；count 在客户端统计；labelKey 为 locales 的 UI 文案 key）
+    const KPIS = [
+      { labelKey: 'tpl.dashboard.kpiAll', label: '全部记录', filter: () => true },
+      { labelKey: 'tpl.dashboard.cat.type_a', label: '类型 A', filter: (r) => r[CATEGORY_FIELD] === 'type_a' },
+      { labelKey: 'tpl.dashboard.kpiNew7d', label: '近 7 天新增', filter: (r) => {
+          const v = r[TREND_FIELD];
+          return !!v && dayjs(v).isValid() && dayjs(v).isAfter(dayjs().subtract(7, 'day'));
+        } },
+    ];
+
+    /* demo_rows：内置假数据，仅占位示范；正式页面严禁保留 */
+    const demo_rows = [
+      { id: 'd1', name: '示例 A', category: 'type_a', created_at: '2026-10-01T08:00:00.000Z' },
+      { id: 'd2', name: '示例 B', category: 'type_b', created_at: '2026-10-05T09:00:00.000Z' },
+      { id: 'd3', name: '示例 C', category: 'type_a', created_at: '2026-10-12T10:00:00.000Z' },
+      { id: 'd4', name: '示例 D', category: 'type_c', created_at: '2026-10-20T14:00:00.000Z' },
+      { id: 'd5', name: '示例 E', category: 'type_b', created_at: '2026-10-24T16:00:00.000Z' },
+    ];
+
+    /* ===== DOM / 错误条 ===== */
+    const $ = (id) => document.getElementById(id);
+    const error = mountErrorBar();
+
+    /* ===== KPI 卡 ===== */
+    function buildKpiCards() {
+      const row = $('kpiRow');
+      row.textContent = '';
+      return KPIS.map((k) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.style.flex = '1 1 200px';
+        const label = document.createElement('div');
+        label.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted-foreground);';
+        label.textContent = t(k.labelKey, k.label);
+        const value = document.createElement('div');
+        value.style.cssText = 'font-size:24px;font-weight:700;line-height:1.3;margin-top:4px;';
+        value.textContent = '…';
+        card.append(label, value);
+        row.appendChild(card);
+        return value;
+      });
+    }
+
+    /* ===== 取数：真实模式拉全量（fetchAll）；演示模式用假数据 ===== */
+    async function loadRows() {
+      if (USE_DEMO) return demo_rows;
+      const rows = await fetchAll(TABLE, 'sort=-created_at');
+      return rows.filter((r) => r && r.id && !r.deleted_at); // 客户端过滤软删除
+    }
+
+    /* ===== 聚合 ===== */
+    function aggregate(rows) {
+      // KPI：客户端计数
+      const kpiValues = KPIS.map((k) => rows.filter(k.filter).length);
+      // 趋势：按日计数（近 TREND_DAYS 天，含 0）
+      const start = dayjs().subtract(TREND_DAYS - 1, 'day').startOf('day');
+      const buckets = new Map();
+      for (let i = 0; i < TREND_DAYS; i++) buckets.set(start.add(i, 'day').format('YYYY-MM-DD'), 0);
+      for (const r of rows) {
+        const v = r[TREND_FIELD];
+        if (!v) continue;
+        const key = dayjs(v).format('YYYY-MM-DD');
+        if (buckets.has(key)) buckets.set(key, buckets.get(key) + 1);
+      }
+      // 分类占比：按 CATEGORY_FIELD 计数，枚举外归「其他」
+      const catCounts = new Map();
+      for (const r of rows) {
+        const key = r[CATEGORY_FIELD];
+        if (key == null || key === '') continue;
+        catCounts.set(key, (catCounts.get(key) || 0) + 1);
+      }
+      return { kpiValues, buckets, catCounts };
+    }
+
+    /* ===== 图表（echarts.init + setOption；共用一个 resize 监听；颜色全部 cssColor token） ===== */
+    function renderCharts({ buckets, catCounts }) {
+      const trendChart = echarts.init($('trendChart'));
+      const pieChart = echarts.init($('pieChart'));
+      window.addEventListener('resize', () => { trendChart.resize(); pieChart.resize(); });
+
+      const days = [...buckets.keys()].map((k) => k.slice(5).replace('-', '/'));
+      const values = [...buckets.values()];
+      trendChart.setOption({
+        grid: { left: 48, right: 20, top: 20, bottom: 28 },
+        tooltip: { trigger: 'axis' },
+        xAxis: {
+          type: 'category', data: days,
+          axisLine: { lineStyle: { color: cssColor('--border') } },
+          axisTick: { show: false },
+          axisLabel: { color: cssColor('--muted-foreground'), fontSize: 11 },
+        },
+        yAxis: {
+          type: 'value',
+          splitLine: { lineStyle: { color: cssColor('--border') } },
+          axisLabel: { color: cssColor('--muted-foreground'), fontSize: 11 },
+        },
+        series: [{
+          type: 'line', smooth: true, symbol: 'circle', symbolSize: 6, data: values,
+          lineStyle: { width: 2, color: cssColor('--primary') },
+          itemStyle: { color: cssColor('--primary') },
+          areaStyle: { color: cssColor('--primary', 0.14) },
+        }],
+      });
+      $('trendNote').hidden = values.some((v) => v > 0);
+
+      // 环形图数据：主题图表色板 --chart-1..5 循环取色（cssColor 读取，主题切换自动跟随）
+      const CHART_COLORS = ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5'];
+      const keys = [...catCounts.keys()];
+      const data = keys.map((key, i) => ({
+        name: CATEGORY_LABELS[key]
+          ? t('tpl.dashboard.cat.' + key, CATEGORY_LABELS[key])
+          : t('tpl.dashboard.catOther', '其他'),
+        value: catCounts.get(key),
+        itemStyle: { color: cssColor(CHART_COLORS[i % CHART_COLORS.length]) },
+      }));
+      if (data.length) {
+        pieChart.setOption({
+          tooltip: { trigger: 'item', formatter: t('tpl.dashboard.pieTooltip', '{b}：{c} 条（{d}%）') },
+          legend: { bottom: 0, icon: 'circle', itemWidth: 10, itemHeight: 10, textStyle: { color: cssColor('--muted-foreground'), fontSize: 11 } },
+          series: [{
+            type: 'pie', radius: ['42%', '68%'], center: ['50%', '44%'],
+            label: { show: false },
+            itemStyle: { borderColor: cssColor('--card'), borderWidth: 2 },
+            data,
+          }],
+        });
+      } else {
+        $('pieChart').style.display = 'none';
+        $('pieNote').hidden = false;
+      }
+    }
+
+    /* ===== 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） ===== */
+    function applyStaticI18n() {
+      document.title = t('tpl.dashboard.title', '仪表盘模板');
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim());
+      }
+    }
+
+    /* ===== 启动：locale 就绪后再渲染 UI 文案 ===== */
+    (async () => {
+      await ensureI18n();
+      applyStaticI18n();
+      const valueEls = buildKpiCards();
+      let rows = [];
+      try {
+        rows = await loadRows();
+      } catch (err) {
+        valueEls.forEach((el) => { el.textContent = '—'; });
+        $('trendChart').style.display = 'none';
+        $('pieChart').style.display = 'none';
+        error.show(t('tpl.dashboard.loadFailedPrefix', '仪表盘数据加载失败：') + err.message);
+        mountLayout({ active: null, title: t('tpl.dashboard.title', '仪表盘模板') });
+        return;
+      }
+      const agg = aggregate(rows);
+      agg.kpiValues.forEach((v, i) => { valueEls[i].textContent = v.toLocaleString('zh-CN'); });
+      renderCharts(agg);
+      mountLayout({ active: null, title: t('tpl.dashboard.title', '仪表盘模板') });
+    })();
+  </script>
+</body>
+</html>

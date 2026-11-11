@@ -1,0 +1,1054 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>主题配置</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat-lyra.cdn.min.css">
+  <link id="themeLink" rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <link rel="stylesheet" href="/vendor/remixicon/remixicon.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+  <script src="/vendor/mustache/mustache.min.js"></script>
+  <style>
+    /* ===== 本页自有结构样式（页面自身颜色一律直接引用主题 token；色块/圆点的具体颜色
+       是运行时解析主题 token 得到的「内容」，以内联 background 呈现，不属于页面静态样式） ===== */
+
+    /* 预设卡 */
+    .ts-preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+    .ts-preset { display: block; width: 100%; text-align: left; padding: 12px 14px; cursor: pointer;
+      transition: border-color 120ms ease, box-shadow 120ms ease; }
+    .ts-preset:hover { border-color: var(--ring); }
+    .ts-preset.is-active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+    .ts-preset-name { display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+      font-size: 14px; font-weight: 600; }
+    .ts-preset-name small { font-size: 11px; font-weight: 400; color: var(--muted-foreground);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .ts-dots { display: flex; gap: 6px; margin-top: 10px; min-height: 16px; }
+    .ts-dot { width: 16px; height: 16px; border-radius: 9999px; border: 1px solid var(--border); flex: none; }
+    .ts-dot-square { border-radius: 0; } /* 直角主题（lyra）的预览块 */
+    .ts-preset-note { display: block; margin-top: 2px; font-size: 11px; color: var(--muted-foreground); }
+
+    /* 自定义区头部：编辑目标 tab + 全局动作 */
+    .ts-custom-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 24px 0 12px; }
+    .ts-custom-head h2 { margin: 0; font-size: 16px; }
+    .ts-tabs { display: flex; gap: 6px; }
+    .ts-tab[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+    .ts-hint { font-size: 12px; color: var(--muted-foreground); }
+
+    /* 尺度控件 */
+    .ts-scale { padding: 12px 16px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 2px; }
+    .ts-scale-row { display: flex; align-items: center; gap: 12px; padding: 7px 0; flex-wrap: wrap; }
+    .ts-scale-row > label { min-width: 150px; font-size: 13px; }
+    .ts-scale-row > input[type="range"] { flex: 1 1 160px; min-width: 140px; accent-color: var(--primary); }
+    .ts-scale-val { min-width: 72px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--foreground); }
+    .ts-scale-ref { font-size: 11px; color: var(--muted-foreground); }
+
+    /* 颜色分组 */
+    .ts-group { padding: 14px 16px; margin-bottom: 12px; }
+    .ts-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .ts-group-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+    .ts-group-n { font-size: 11px; color: var(--muted-foreground); }
+    .ts-items { margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px 16px; }
+    .ts-item-name { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted-foreground); }
+    .ts-item-name code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+    .ts-item-reset { border: none; background: none; padding: 0 3px; color: var(--muted-foreground);
+      cursor: pointer; display: inline-flex; align-items: center; }
+    .ts-item-reset:hover { color: var(--primary); }
+    .ts-item-reset i { font-size: 13px; }
+    .ts-alpha-mark { font-size: 10px; color: var(--muted-foreground); border: 1px solid var(--border);
+      border-radius: calc(var(--radius) * 0.5); padding: 0 4px; }
+    .ts-item-ctl { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+    .ts-item-ctl input[type="color"] { width: 32px; height: 30px; padding: 2px; flex: none; cursor: pointer;
+      border: 1px solid var(--border); border-radius: calc(var(--radius) - 2px); background: var(--card); }
+    .ts-oklch { flex: 1; min-width: 0; font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .ts-item.is-invalid .ts-oklch { border-color: var(--destructive); color: var(--destructive); }
+
+    /* 三态 */
+    .ts-skel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+    .ts-error { margin: 48px auto 0; max-width: 460px; text-align: center; padding: 28px 24px; }
+
+    /* 功能未启用卡片（features.theme_studio=false；样式贴 .ts-error 居中卡片） */
+    .ts-disabled { margin: 48px auto 0; max-width: 460px; text-align: center; padding: 28px 24px; }
+
+    /* 页尾说明 */
+    .ts-foot { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--border);
+      font-size: 12px; line-height: 1.8; color: var(--muted-foreground); }
+    .ts-foot code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+
+    /* 页面级轻提示（与外壳 lx-toast 同款 token 配色） */
+    .ts-toast { display: none; position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+      z-index: 70; padding: 8px 14px; border-radius: var(--radius); font-size: 13px;
+      background: var(--foreground); color: var(--background);
+      box-shadow: 0 8px 24px color-mix(in oklab, var(--foreground) 20%, transparent); }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <main style="padding:16px 24px 40px;max-width:1200px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <h1 style="margin:0;font-size:20px;flex:none;" data-i18n="page.themeStudio.title">主题配置</h1>
+        <span id="tsStatus" style="font-size:12px;color:var(--muted-foreground);" data-i18n="page.themeStudio.loading">加载中…</span>
+      </div>
+
+      <!-- 加载中：预设区骨架 -->
+      <h2 style="margin:22px 0 10px;font-size:16px;" data-i18n="page.themeStudio.presetsTitle">预设主题</h2>
+      <div id="tsLoading" class="ts-skel-grid" aria-label="加载中"></div>
+
+      <!-- 失败态（可重试） -->
+      <section id="tsError" class="card ts-error" style="display:none;">
+        <p style="margin:0 0 6px;font-size:14px;font-weight:600;" data-i18n="page.themeStudio.failTitle">主题文件加载失败</p>
+        <p id="tsErrorMsg" style="margin:0 0 14px;font-size:13px;color:var(--muted-foreground);word-break:break-all;"></p>
+        <button id="btnRetry" class="btn" data-variant="outline" type="button" data-i18n="page.themeStudio.retry">重试</button>
+      </section>
+
+      <!-- 主内容 -->
+      <div id="tsMain" hidden>
+        <div id="presetGrid" class="ts-preset-grid"></div>
+
+        <div class="ts-custom-head">
+          <h2 data-i18n="page.themeStudio.customTitle">自定义</h2>
+          <div class="ts-tabs" role="tablist" aria-label="编辑目标">
+            <button class="btn ts-tab" data-target="light" aria-pressed="true" type="button" role="tab" data-i18n="page.themeStudio.tabLight">浅色 :root</button>
+            <button class="btn ts-tab" data-target="dark" aria-pressed="false" type="button" role="tab" data-i18n="page.themeStudio.tabDark">深色 .dark</button>
+          </div>
+          <span style="flex:1;"></span>
+          <span class="ts-hint" data-i18n="page.themeStudio.darkHint">预览深色效果用右上角外壳的主题切换按钮</span>
+          <button id="btnReset" class="btn" data-variant="outline" data-size="sm" type="button">
+            <i class="ri-arrow-go-back-line" aria-hidden="true"></i><span data-i18n="page.themeStudio.resetCustom">重置自定义</span>
+          </button>
+          <button id="btnExport" class="btn" data-size="sm" type="button">
+            <i class="ri-clipboard-line" aria-hidden="true"></i><span data-i18n="page.themeStudio.copyCss">复制 CSS</span>
+          </button>
+        </div>
+
+        <!-- 尺度（:root 级，浅色深色共用；基础字号仅预览生效，不随导出） -->
+        <div class="card ts-scale">
+          <div class="ts-scale-row">
+            <label for="slRadius" data-i18n="page.themeStudio.labelRadius">圆角 --radius</label>
+            <input id="slRadius" type="range" min="0" max="1.25" step="0.05" value="0.45" aria-label="圆角大小">
+            <code class="ts-scale-val" id="radiusVal">0.45rem</code>
+            <span class="ts-scale-ref" id="radiusRef"></span>
+          </div>
+          <div class="ts-scale-row">
+            <label for="slTag" data-i18n="page.themeStudio.labelTagRadius">徽章/标签圆角 --tag-radius</label>
+            <input id="slTag" type="range" min="0" max="2" step="0.05" value="2" aria-label="徽章标签圆角">
+            <code class="ts-scale-val" id="tagVal">2rem</code>
+            <span class="ts-scale-ref" id="tagRef"></span>
+          </div>
+          <div class="ts-scale-row">
+            <label for="slFont" data-i18n="page.themeStudio.labelFontSize">基础字号（html font-size）</label>
+            <input id="slFont" type="range" min="14" max="18" step="1" value="16" aria-label="基础字号">
+            <code class="ts-scale-val" id="fontVal">16px</code>
+            <span class="ts-scale-ref" data-i18n="page.themeStudio.fontRef">基准 16px · 全站 rem 布局随之缩放 · 仅预览</span>
+          </div>
+          <div class="ts-scale-row">
+            <label for="selFont" data-i18n="page.themeStudio.labelFont">字体 --font-sans</label>
+            <select id="selFont" class="select" style="flex:1 1 220px;min-width:200px;" aria-label="界面字体">
+              <option value="" data-i18n="page.themeStudio.optDefault">默认（basecoat / Geist 栈）</option>
+              <option value="inter" data-i18n="page.themeStudio.optInter">Inter 优先（本机装有则生效，否则回退系统）</option>
+              <option value="system" data-i18n="page.themeStudio.optSystem">系统默认无衬线</option>
+              <option value="serif" data-i18n="page.themeStudio.optSerif">衬线</option>
+            </select>
+            <span class="ts-scale-ref" data-i18n="page.themeStudio.fontSansRef">basecoat 消费 --font-sans · 改动全站正文字体 · 不加载外部字体文件</span>
+          </div>
+        </div>
+
+        <!-- 颜色分组（运行时注入） -->
+        <div id="editorGroups"></div>
+
+        <div class="ts-foot">
+          <span data-i18n="page.themeStudio.foot.s1">正式生效方式：点「复制 CSS」→ 存为</span> <code>themes/xxx.css</code><span data-i18n="page.themeStudio.foot.s2"> → 把</span> <code>zpm.config.yaml</code><span data-i18n="page.themeStudio.foot.s3">的</span> <code>server.theme</code><span data-i18n="page.themeStudio.foot.s4">指向它（页面保存后刷新即生效）。本页的运行时覆盖只是预览，刷新浏览器即被上面两步取代。</span>
+          <span data-i18n="page.themeStudio.foot.s5">暗色 token 带透明度的项（如</span> <code>oklch(1 0 0 / 10%)</code><span data-i18n="page.themeStudio.foot.s6">）建议直接改 oklch 文本以保留透明度；用取色器改色会把透明度重置为 1。</span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 预设卡模板（圆点颜色 = 运行时解析主题 token 得到的内容值，{{var}} 转义） -->
+  <script type="text/template" id="tplPresets">
+    {{#presets}}
+    <button class="card ts-preset{{#active}} is-active{{/active}}"
+            type="button" data-preset="{{key}}" aria-pressed="{{activeStr}}">
+      <span class="ts-preset-name">{{label}}<small>{{key}}.css</small></span>
+      {{#note}}<span class="ts-preset-note">{{note}}</span>{{/note}}
+      <span class="ts-dots">
+        {{#dots}}<span class="ts-dot{{#square}} ts-dot-square{{/square}}" style="background:{{.}}"></span>{{/dots}}
+      </span>
+      {{#active}}<span class="badge" style="margin-top:10px;">{{activeLabel}}</span>{{/active}}
+    </button>
+    {{/presets}}
+  </script>
+
+  <!-- 颜色分组模板（{{var}} 转义；raw/hex 为运行时值） -->
+  <script type="text/template" id="tplEditor">
+    {{#groups}}
+    <section class="card ts-group">
+      <div class="ts-group-head">
+        <h3>{{label}}</h3>
+        <span class="ts-group-n">{{count}} {{unitTokens}}</span>
+      </div>
+      <div class="ts-items">
+        {{#items}}
+        <div class="ts-item" data-token="{{token}}">
+          <div class="ts-item-name">
+            <code>{{token}}</code>
+            {{#alpha}}<span class="ts-alpha-mark" title="{{alphaTitle}}">α</span>{{/alpha}}
+            {{#overridden}}<button class="ts-item-reset" type="button" data-reset="{{token}}" title="{{resetTitle}}" aria-label="{{resetAria}}"><i class="ri-arrow-go-back-line" aria-hidden="true"></i></button>{{/overridden}}
+          </div>
+          <div class="ts-item-ctl">
+            <input type="color" class="ts-color" data-hex="{{token}}" value="{{hex}}" aria-label="{{colorAria}}">
+            <input type="text" class="input ts-oklch" data-oklch="{{token}}" value="{{raw}}" spellcheck="false" aria-label="{{oklchAria}}">
+          </div>
+        </div>
+        {{/items}}
+      </div>
+    </section>
+    {{/groups}}
+  </script>
+
+  <script type="module">
+    /* ============================================================
+     * 主题配置页（theme-studio）
+     * - 生效机制：全页唯一运行时覆盖点 <style id="tokenOverride">
+     *   内容 = 当前预设相对 /theme.css 的 token 差异 + 尺度变量 + 用户颜色自定义（:root / .dark 两段）。
+     *   说明：zpm serve 对 /themes/*.css 走兜底路由（返回 index.html），「换 link href」不可行，
+     *   故预设 token 以文档性配置内置（与仓库 themes/*.css 逐字一致，中性 token 共享基座 + 每主题差异），
+     *   切预设=改覆盖点内容；服务端主题 /theme.css 运行时解析，用于探测当前预设与提供真实基线。
+     * - 浅色/深色分别编辑（编辑目标 tab，非主题开关；暗色预览走外壳主题切换按钮）
+     * - hex↔oklch 原生转换（Ottosson OKLab 矩阵），色域外用「降饱和度二分」裁剪
+     * - 持久化 localStorage['zpm.themeStudio.v1']；导出为 themes/*.css 同构全文
+     * ============================================================ */
+    import { getJSON, mountErrorBar, afterInject } from '/app.js';
+    import { ensureI18n, t } from '/i18n.js';
+    import { mountLayout } from '/layout/layout.js';
+
+    /* ===== 预设清单（中文为 UI 配置；token 内容见下方内置配置） ===== */
+    const PRESETS = [
+      { key: 'default', label: '蔚蓝' },
+      { key: 'emerald', label: '翡翠' },
+      { key: 'violet', label: '暮紫' },
+      { key: 'orange', label: '暖阳' },
+      { key: 'lyra', label: 'Lyra', note: '里拉 · Zinc×Teal · 直角', square: true },
+    ];
+    /* 预设名 / 注记经 locale 表按界面语言取值（上方中文为调用点缺省；导出 CSS 文件注释除外，见 buildExportText） */
+    const presetLabelOf = (key) => {
+      const p = PRESETS.find((x) => x.key === key);
+      return p ? t('page.themeStudio.preset.' + p.key, p.label) : key;
+    };
+    const STORE_KEY = 'zpm.themeStudio.v1';
+    const DOT_TOKENS = ['--primary', '--chart-1', '--chart-2', '--chart-4']; // 预览圆点取的 token
+
+    /* 字体预设栈（basecoat 消费 --font-sans；本机无对应字体时按栈自然回退，不加载外部字体文件） */
+    const FONT_STACKS = {
+      inter: '"Inter", "Inter var", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
+      system: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
+      serif: 'ui-serif, Georgia, "Times New Roman", serif, "Apple Color Emoji", "Segoe UI Emoji"',
+    };
+
+    /* ===== 内置主题 token（文档性配置，与仓库 themes/*.css 逐字一致） =====
+     * 结构：THEME_NEUTRAL = 五预设共享的中性 token（不含 --radius）；
+     * PRESET_DIFFS[key].light 首项即该预设的 --radius（lyra 为 0，其余 0.45rem），
+     * 其余为该预设与中性基座的色彩差异。lyra 来源：TweakCN 导出（Zinc×Teal，radius 0）。 */
+    const THEME_NEUTRAL = {
+      light: {
+        '--background': 'oklch(1 0 0)',
+        '--foreground': 'oklch(0.141 0.005 285.823)',
+        '--card': 'oklch(1 0 0)',
+        '--card-foreground': 'oklch(0.141 0.005 285.823)',
+        '--popover': 'oklch(1 0 0)',
+        '--popover-foreground': 'oklch(0.141 0.005 285.823)',
+        '--secondary': 'oklch(0.967 0.001 286.375)',
+        '--secondary-foreground': 'oklch(0.21 0.006 285.885)',
+        '--muted': 'oklch(0.967 0.001 286.375)',
+        '--muted-foreground': 'oklch(0.552 0.016 285.938)',
+        '--accent': 'oklch(0.967 0.001 286.375)',
+        '--accent-foreground': 'oklch(0.21 0.006 285.885)',
+        '--destructive': 'oklch(0.577 0.245 27.325)',
+        '--border': 'oklch(0.92 0.004 286.32)',
+        '--input': 'oklch(0.92 0.004 286.32)',
+        '--sidebar': 'oklch(0.985 0 0)',
+        '--sidebar-foreground': 'oklch(0.141 0.005 285.823)',
+        '--sidebar-accent': 'oklch(0.967 0.001 286.375)',
+        '--sidebar-accent-foreground': 'oklch(0.21 0.006 285.885)',
+        '--sidebar-border': 'oklch(0.92 0.004 286.32)',
+      },
+      dark: {
+        '--background': 'oklch(0.141 0.005 285.823)',
+        '--foreground': 'oklch(0.985 0 0)',
+        '--card': 'oklch(0.21 0.006 285.885)',
+        '--card-foreground': 'oklch(0.985 0 0)',
+        '--popover': 'oklch(0.21 0.006 285.885)',
+        '--popover-foreground': 'oklch(0.985 0 0)',
+        '--secondary': 'oklch(0.274 0.006 286.033)',
+        '--secondary-foreground': 'oklch(0.985 0 0)',
+        '--muted': 'oklch(0.274 0.006 286.033)',
+        '--muted-foreground': 'oklch(0.705 0.015 286.067)',
+        '--accent': 'oklch(0.274 0.006 286.033)',
+        '--accent-foreground': 'oklch(0.985 0 0)',
+        '--destructive': 'oklch(0.704 0.191 22.216)',
+        '--border': 'oklch(1 0 0 / 10%)',
+        '--input': 'oklch(1 0 0 / 15%)',
+        '--sidebar': 'oklch(0.21 0.006 285.885)',
+        '--sidebar-foreground': 'oklch(0.985 0 0)',
+        '--sidebar-primary-foreground': 'oklch(0.302 0.056 229.695)',
+        '--sidebar-accent': 'oklch(0.274 0.006 286.033)',
+        '--sidebar-accent-foreground': 'oklch(0.985 0 0)',
+        '--sidebar-border': 'oklch(1 0 0 / 10%)',
+      },
+    };
+    const DEFAULT_CHARTS_LIGHT = {
+      '--chart-1': 'oklch(0.865 0.127 207.078)',
+      '--chart-2': 'oklch(0.715 0.143 215.221)',
+      '--chart-3': 'oklch(0.609 0.126 221.723)',
+      '--chart-4': 'oklch(0.52 0.105 223.128)',
+      '--chart-5': 'oklch(0.45 0.085 224.283)',
+    };
+    const PRESET_DIFFS = {
+      default: {
+        light: {
+          '--radius': '0.45rem',
+          '--tag-radius': '2rem',
+          '--primary': 'oklch(0.52 0.105 223.128)',
+          '--primary-foreground': 'oklch(0.984 0.019 200.873)',
+          '--ring': 'oklch(0.705 0.015 286.067)',
+          ...DEFAULT_CHARTS_LIGHT,
+          '--sidebar-primary': 'oklch(0.609 0.126 221.723)',
+          '--sidebar-primary-foreground': 'oklch(0.984 0.019 200.873)',
+          '--sidebar-ring': 'oklch(0.705 0.015 286.067)',
+        },
+        dark: {
+          '--primary': 'oklch(0.45 0.085 224.283)',
+          '--primary-foreground': 'oklch(0.984 0.019 200.873)',
+          '--ring': 'oklch(0.552 0.016 285.938)',
+          ...DEFAULT_CHARTS_LIGHT,
+          '--sidebar-primary': 'oklch(0.715 0.143 215.221)',
+          '--sidebar-ring': 'oklch(0.552 0.016 285.938)',
+        },
+      },
+      emerald: {
+        light: {
+          '--radius': '0.45rem',
+          '--tag-radius': '2rem',
+          '--primary': 'oklch(0.596 0.145 163.225)',
+          '--primary-foreground': 'oklch(0.984 0.019 200.873)',
+          '--ring': 'oklch(0.696 0.17 162.48)',
+          '--chart-1': 'oklch(0.696 0.17 162.48)',
+          '--chart-2': 'oklch(0.596 0.145 163.225)',
+          '--chart-3': 'oklch(0.527 0.154 150.069)',
+          '--chart-4': 'oklch(0.527 0.154 150.069)',
+          '--chart-5': 'oklch(0.393 0.095 152.535)',
+          '--sidebar-primary': 'oklch(0.527 0.154 150.069)',
+          '--sidebar-primary-foreground': 'oklch(0.984 0.019 200.873)',
+          '--sidebar-ring': 'oklch(0.696 0.17 162.48)',
+        },
+        dark: {
+          '--primary': 'oklch(0.696 0.17 162.48)',
+          '--primary-foreground': 'oklch(0.985 0 0)',
+          '--ring': 'oklch(0.527 0.154 150.069)',
+          '--chart-1': 'oklch(0.696 0.17 162.48)',
+          '--chart-2': 'oklch(0.596 0.145 163.225)',
+          '--chart-3': 'oklch(0.527 0.154 150.069)',
+          '--chart-4': 'oklch(0.527 0.154 150.069)',
+          '--chart-5': 'oklch(0.393 0.095 152.535)',
+          '--sidebar-primary': 'oklch(0.696 0.17 162.48)',
+          '--sidebar-ring': 'oklch(0.527 0.154 150.069)',
+        },
+      },
+      violet: {
+        light: {
+          '--radius': '0.45rem',
+          '--tag-radius': '2rem',
+          '--primary': 'oklch(0.541 0.281 293.009)',
+          '--primary-foreground': 'oklch(0.985 0 0)',
+          '--ring': 'oklch(0.606 0.25 292.717)',
+          '--chart-1': 'oklch(0.606 0.25 292.717)',
+          '--chart-2': 'oklch(0.541 0.281 293.009)',
+          '--chart-3': 'oklch(0.496 0.265 301.924)',
+          '--chart-4': 'oklch(0.436 0.217 306.547)',
+          '--chart-5': 'oklch(0.386 0.176 306.987)',
+          '--sidebar-primary': 'oklch(0.496 0.265 301.924)',
+          '--sidebar-primary-foreground': 'oklch(0.984 0.019 200.873)',
+          '--sidebar-ring': 'oklch(0.606 0.25 292.717)',
+        },
+        dark: {
+          '--primary': 'oklch(0.606 0.25 292.717)',
+          '--primary-foreground': 'oklch(0.985 0 0)',
+          '--ring': 'oklch(0.541 0.281 293.009)',
+          '--chart-1': 'oklch(0.606 0.25 292.717)',
+          '--chart-2': 'oklch(0.541 0.281 293.009)',
+          '--chart-3': 'oklch(0.496 0.265 301.924)',
+          '--chart-4': 'oklch(0.436 0.217 306.547)',
+          '--chart-5': 'oklch(0.386 0.176 306.987)',
+          '--sidebar-primary': 'oklch(0.606 0.25 292.717)',
+          '--sidebar-ring': 'oklch(0.541 0.281 293.009)',
+        },
+      },
+      orange: {
+        light: {
+          '--radius': '0.45rem',
+          '--tag-radius': '2rem',
+          '--primary': 'oklch(0.646 0.222 41.116)',
+          '--primary-foreground': 'oklch(0.98 0.016 73.684)',
+          '--ring': 'oklch(0.705 0.213 47.604)',
+          '--chart-1': 'oklch(0.705 0.213 47.604)',
+          '--chart-2': 'oklch(0.646 0.222 41.116)',
+          '--chart-3': 'oklch(0.553 0.195 38.402)',
+          '--chart-4': 'oklch(0.47 0.157 37.304)',
+          '--chart-5': 'oklch(0.408 0.123 38.172)',
+          '--sidebar-primary': 'oklch(0.553 0.195 38.402)',
+          '--sidebar-primary-foreground': 'oklch(0.984 0.019 200.873)',
+          '--sidebar-ring': 'oklch(0.705 0.213 47.604)',
+        },
+        dark: {
+          '--primary': 'oklch(0.705 0.213 47.604)',
+          '--primary-foreground': 'oklch(0.985 0 0)',
+          '--ring': 'oklch(0.646 0.222 41.116)',
+          '--chart-1': 'oklch(0.705 0.213 47.604)',
+          '--chart-2': 'oklch(0.646 0.222 41.116)',
+          '--chart-3': 'oklch(0.553 0.195 38.402)',
+          '--chart-4': 'oklch(0.47 0.157 37.304)',
+          '--chart-5': 'oklch(0.408 0.123 38.172)',
+          '--sidebar-primary': 'oklch(0.705 0.213 47.604)',
+          '--sidebar-ring': 'oklch(0.646 0.222 41.116)',
+        },
+      },
+      lyra: {
+        light: {
+          '--radius': '0',
+          '--tag-radius': '0',
+          '--primary': 'oklch(0.511 0.096 186.391)',
+          '--primary-foreground': 'oklch(0.984 0.014 180.72)',
+          '--ring': 'oklch(0.705 0.015 286.067)',
+          '--chart-1': 'oklch(0.855 0.138 181.071)',
+          '--chart-2': 'oklch(0.704 0.14 182.503)',
+          '--chart-3': 'oklch(0.6 0.118 184.704)',
+          '--chart-4': 'oklch(0.511 0.096 186.391)',
+          '--chart-5': 'oklch(0.437 0.078 188.216)',
+          '--sidebar-primary': 'oklch(0.6 0.118 184.704)',
+          '--sidebar-primary-foreground': 'oklch(0.984 0.014 180.72)',
+          '--sidebar-ring': 'oklch(0.705 0.015 286.067)',
+        },
+        dark: {
+          '--primary': 'oklch(0.437 0.078 188.216)',
+          '--primary-foreground': 'oklch(0.984 0.014 180.72)',
+          '--ring': 'oklch(0.552 0.016 285.938)',
+          '--chart-1': 'oklch(0.855 0.138 181.071)',
+          '--chart-2': 'oklch(0.704 0.14 182.503)',
+          '--chart-3': 'oklch(0.6 0.118 184.704)',
+          '--chart-4': 'oklch(0.511 0.096 186.391)',
+          '--chart-5': 'oklch(0.437 0.078 188.216)',
+          '--sidebar-primary': 'oklch(0.704 0.14 182.503)',
+          '--sidebar-primary-foreground': 'oklch(0.277 0.046 192.524)',
+          '--sidebar-ring': 'oklch(0.552 0.016 285.938)',
+        },
+      },
+    };
+    function presetTokens(key) {
+      const d = PRESET_DIFFS[key];
+      return { light: { ...THEME_NEUTRAL.light, ...d.light }, dark: { ...THEME_NEUTRAL.dark, ...d.dark } };
+    }
+
+    /* ===== oklch ↔ hex（Ottosson OKLab 参考实现；精度说明见文件尾注释） ===== */
+    const toLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+    const toGamma = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+
+    function oklchToLinearSrgb(L, C, Hdeg) {
+      const h = (Hdeg * Math.PI) / 180;
+      const a = C * Math.cos(h);
+      const b = C * Math.sin(h);
+      const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+      const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+      const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+      const l = l_ * l_ * l_;
+      const m = m_ * m_ * m_;
+      const s = s_ * s_ * s_;
+      return [
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+      ];
+    }
+
+    function linearSrgbToOklch(r, g, b) {
+      const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+      const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+      const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+      const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+      const L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_;
+      const A = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_;
+      const B = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_;
+      const C = Math.sqrt(A * A + B * B);
+      let H = (Math.atan2(B, A) * 180) / Math.PI;
+      if (H < 0) H += 360;
+      return { L, C, H };
+    }
+
+    const inGamut = (rgb) => rgb.every((v) => v >= -0.0001 && v <= 1.0001);
+
+    // oklch → hex：色域外按「保 L/H、二分降 C」裁剪（与 CSS Color 4 的 chroma-reduction
+    // 映射思路一致；浏览器还会微调 L，故与浏览器渲染可能有 ±1~2/255 的通道差，属预期精度取舍）
+    function oklchToHex(L, C, Hdeg) {
+      let c = C;
+      if (!inGamut(oklchToLinearSrgb(L, C, Hdeg))) {
+        // 色域外：保 L/H，二分降 C 到恰好入域
+        let lo = 0, hi = C;
+        for (let i = 0; i < 24; i++) {
+          const mid = (lo + hi) / 2;
+          if (inGamut(oklchToLinearSrgb(L, mid, Hdeg))) lo = mid; else hi = mid;
+        }
+        c = lo;
+      }
+      const rgb = oklchToLinearSrgb(L, c, Hdeg).map((v) => Math.round(toGamma(Math.min(1, Math.max(0, v))) * 255));
+      return '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('');
+    }
+
+    // hex → oklch 文本（L/C 三位小数、H 一位小数；不含 alpha——取色器本身无透明度）
+    function hexToOklch(hex) {
+      const m = hex.replace('#', '');
+      const r = toLinear(parseInt(m.slice(0, 2), 16) / 255);
+      const g = toLinear(parseInt(m.slice(2, 4), 16) / 255);
+      const b = toLinear(parseInt(m.slice(4, 6), 16) / 255);
+      const { L, C, H } = linearSrgbToOklch(r, g, b);
+      const fmt = (v, d) => String(parseFloat(v.toFixed(d)));
+      return 'oklch(' + fmt(L, 3) + ' ' + fmt(C, 3) + ' ' + fmt(H, 1) + ')';
+    }
+
+    const OKLCH_RE = /^oklch\(\s*([\d.]+)(%?)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+)(%?)\s*)?\)$/i;
+    function parseOklch(text) {
+      const m = OKLCH_RE.exec(String(text || '').trim());
+      if (!m) return null;
+      let L = parseFloat(m[1]); if (m[2] === '%') L /= 100;
+      const C = parseFloat(m[3]);
+      const H = parseFloat(m[4]);
+      let alpha = null;
+      if (m[5] != null) { alpha = parseFloat(m[5]); if (m[6] === '%') alpha /= 100; }
+      if (!isFinite(L) || !isFinite(C) || !isFinite(H) || L < 0 || L > 1 || C < 0) return null;
+      return { L, C, H, alpha };
+    }
+    const oklchTextToHex = (text) => { const p = parseOklch(text); return p ? oklchToHex(p.L, p.C, p.H) : null; };
+
+    /* ===== 主题文件解析：剥注释 → 取 :root / .dark 段 → 逐 token（兼容 / alpha%） ===== */
+    function parseThemeCss(text) {
+      const css = String(text || '').replace(/\/\*[\s\S]*?\*\//g, '');
+      const grab = (sel) => {
+        const m = new RegExp(sel + '\\s*\\{([^}]*)\\}').exec(css);
+        if (!m) return null;
+        const out = {};
+        const re = /--([a-z0-9-]+)\s*:\s*([^;]+)[;}]?/g;
+        let t;
+        while ((t = re.exec(m[1]))) out['--' + t[1].toLowerCase()] = t[2].trim();
+        return out;
+      };
+      const light = grab(':root');
+      const dark = grab('\\.dark');
+      if (!light || !dark || !light['--background']) throw new Error(t('page.themeStudio.errParse', '主题文件解析失败：缺少 :root / .dark token 段'));
+      return { light, dark };
+    }
+
+    /* ===== 状态 ===== */
+    const state = {
+      preset: null,                        // 'default' | ... | 'lyra' | null（null = 服务端自定义主题）
+      scale: { radius: null, tagRadius: null, fontSize: null, sans: null }, // null = 未自定义；radius/tagRadius rem、fontSize px、sans 为完整字体栈
+      light: {},                           // token -> 原始 css 值（oklch 文本），浅色覆盖
+      dark: {},                            // 深色覆盖
+    };
+    let baseline = { light: {}, dark: {} }; // 当前预设/服务端主题的解析值（编辑基线）
+    let serverParsed = { light: {}, dark: {} }; // /theme.css 解析值（探测基线 + 差异计算）
+    let serverActive = null;                // 与 /theme.css 一致的预设 key（不一致 = 服务端自定义）
+    let target = 'light';                   // 编辑目标 tab
+
+    const $ = (id) => document.getElementById(id);
+    const error = mountErrorBar();
+
+    /* ===== 唯一运行时覆盖点 =====
+     * 内容 = 预设相对 /theme.css 的差异（预设≠服务端主题时接管配色）+ 尺度 + 用户自定义；
+     * 同一 :root 块内后者声明胜出，顺序：差异 → 尺度 → 用户自定义。 */
+    const overrideEl = document.createElement('style');
+    overrideEl.id = 'tokenOverride';
+    document.head.appendChild(overrideEl);
+
+    const overriddenCount = () => Object.keys(state.light).length + Object.keys(state.dark).length
+      + (state.scale.radius != null ? 1 : 0) + (state.scale.tagRadius != null ? 1 : 0)
+      + (state.scale.fontSize != null ? 1 : 0) + (state.scale.sans ? 1 : 0);
+
+    function buildOverrideCss() {
+      const root = [];
+      const dark = [];
+      for (const [k, v] of Object.entries(baseline.light)) {
+        if (serverParsed.light[k] !== v) root.push(k + ': ' + v);
+      }
+      for (const [k, v] of Object.entries(baseline.dark)) {
+        if (serverParsed.dark[k] !== v) dark.push(k + ': ' + v);
+      }
+      if (state.scale.radius != null) root.push('--radius: ' + state.scale.radius);
+      if (state.scale.tagRadius != null) root.push('--tag-radius: ' + state.scale.tagRadius);
+      if (state.scale.fontSize != null) root.push('font-size: ' + state.scale.fontSize);
+      if (state.scale.sans) root.push('--font-sans: ' + state.scale.sans);
+      for (const [k, v] of Object.entries(state.light)) root.push(k + ': ' + v);
+      for (const [k, v] of Object.entries(state.dark)) dark.push(k + ': ' + v);
+      const blocks = [];
+      if (root.length) blocks.push(':root {\n  ' + root.join(';\n  ') + ';\n}');
+      if (dark.length) blocks.push('.dark {\n  ' + dark.join(';\n  ') + ';\n}');
+      return blocks.join('\n');
+    }
+
+    function applyOverrides(persist = true) {
+      overrideEl.textContent = buildOverrideCss();
+      if (persist) persistState();
+      updateStatus();
+    }
+
+    /* ===== 持久化 ===== */
+    function persistState() {
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify({
+          preset: state.preset, scale: state.scale, light: state.light, dark: state.dark,
+        }));
+      } catch { /* 存储不可用（隐私模式等）：预览仍可用 */ }
+    }
+    function readStored() {
+      try {
+        const raw = localStorage.getItem(STORE_KEY);
+        if (!raw) return null;
+        const v = JSON.parse(raw);
+        if (!v || typeof v !== 'object') return null;
+        return {
+          preset: typeof v.preset === 'string' && PRESET_DIFFS[v.preset] ? v.preset : null,
+          scale: v.scale && typeof v.scale === 'object'
+            ? {
+                radius: v.scale.radius ?? null,
+                tagRadius: v.scale.tagRadius ?? null,
+                fontSize: v.scale.fontSize ?? null,
+                sans: typeof v.scale.sans === 'string' && Object.values(FONT_STACKS).includes(v.scale.sans) ? v.scale.sans : null,
+              }
+            : { radius: null, tagRadius: null, fontSize: null, sans: null },
+          light: v.light && typeof v.light === 'object' ? v.light : {},
+          dark: v.dark && typeof v.dark === 'object' ? v.dark : {},
+        };
+      } catch { return null; }
+    }
+
+    /* ===== 轻提示 ===== */
+    let toastTimer = null;
+    const toastEl = document.createElement('div');
+    toastEl.className = 'ts-toast';
+    toastEl.setAttribute('role', 'status');
+    document.body.appendChild(toastEl);
+    function toast(msg) {
+      toastEl.textContent = msg;
+      toastEl.style.display = 'block';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, 2600);
+    }
+
+    /* ===== 视图 ===== */
+    const resolveToken = (tok) => state[target][tok] ?? baseline[target][tok] ?? '';
+
+    function updateStatus() {
+      // 命中服务端预设时文件名未知（可能叫 lyra_new.css 等导出名），措辞不硬编码文件名
+      const presetLabel = !state.preset
+        ? t('page.themeStudio.statusServerCustom', '服务端自定义主题（/theme.css）')
+        : state.preset === serverActive
+          ? presetLabelOf(state.preset) + t('page.themeStudio.statusServerSuffix', '（服务端 /theme.css）')
+          : presetLabelOf(state.preset) + t('page.themeStudio.statusPreviewHead', '（') + state.preset + t('page.themeStudio.statusPreviewTail', '.css 内置预览）');
+      const colorN = Object.keys(state.light).length + Object.keys(state.dark).length;
+      const scaleN = (state.scale.radius != null ? 1 : 0) + (state.scale.tagRadius != null ? 1 : 0)
+        + (state.scale.fontSize != null ? 1 : 0) + (state.scale.sans ? 1 : 0);
+      $('tsStatus').textContent = t('page.themeStudio.statusNow', '当前：') + presetLabel
+        + t('page.themeStudio.statusColors', ' · 颜色自定义 ') + colorN + t('page.themeStudio.statusUnit', ' 项')
+        + t('page.themeStudio.statusScale', ' · 尺度自定义 ') + scaleN + t('page.themeStudio.statusUnit', ' 项');
+    }
+
+    function renderPresets() {
+      const view = PRESETS.map((p) => {
+        const tokens = presetTokens(p.key);
+        const dots = DOT_TOKENS.map((tok) => oklchTextToHex(tokens.light[tok])).filter(Boolean);
+        return {
+          key: p.key,
+          label: presetLabelOf(p.key),
+          note: p.note ? t('page.themeStudio.presetNote.' + p.key, p.note) : '',
+          square: !!p.square,
+          active: state.preset === p.key,
+          activeStr: state.preset === p.key ? 'true' : 'false',
+          dots,
+        };
+      });
+      const host = $('presetGrid');
+      host.textContent = '';
+      const frag = document.createElement('div');
+      frag.innerHTML = Mustache.render($('tplPresets').textContent, { presets: view, activeLabel: t('page.themeStudio.activeBadge', '当前') });
+      while (frag.firstChild) host.appendChild(frag.firstChild);
+      afterInject(host);
+    }
+
+    function renderEditor() {
+      // 模板内静态 UI 词 / aria 标注经 t() 注入视图模型（mustache 不能调 t）
+      const groups = COLOR_GROUPS.map((g) => ({
+        label: t('page.themeStudio.group.' + g.key, g.label),
+        count: g.tokens.length,
+        items: g.tokens.map((tok) => {
+          const raw = resolveToken(tok);
+          const hex = oklchTextToHex(raw);
+          return {
+            token: tok,
+            raw,
+            hex: hex || '#000000',
+            alpha: /\//.test(raw),
+            overridden: !!state[target][tok],
+            resetAria: t('page.themeStudio.resetAriaHead', '恢复') + ' ' + tok + ' ' + t('page.themeStudio.resetAriaTail', '预设值'),
+            colorAria: tok + t('page.themeStudio.colorAriaSuffix', ' 取色'),
+            oklchAria: tok + t('page.themeStudio.oklchAriaSuffix', ' oklch 值'),
+          };
+        }),
+      }));
+      const host = $('editorGroups');
+      host.textContent = '';
+      const frag = document.createElement('div');
+      frag.innerHTML = Mustache.render($('tplEditor').textContent, {
+        groups,
+        unitTokens: t('page.themeStudio.unitTokens', '项'),
+        alphaTitle: t('page.themeStudio.alphaTitle', '该 token 当前值带透明度，建议用右侧 oklch 输入框编辑'),
+        resetTitle: t('page.themeStudio.resetTitle', '恢复预设值'),
+      });
+      while (frag.firstChild) host.appendChild(frag.firstChild);
+      afterInject(host); // 注入后重建 basecoat 交互组件
+    }
+
+    function renderScale() {
+      // 注意 radius/tagRadius 可能为 0（lyra）：不能用 || 回退，需 Number.isFinite 判断
+      const raw = parseFloat(baseline.light['--radius']);
+      const presetRadius = Number.isFinite(raw) ? raw : 0.45;
+      const radius = state.scale.radius != null ? parseFloat(state.scale.radius) : presetRadius;
+      const font = state.scale.fontSize != null ? parseFloat(state.scale.fontSize) : 16;
+      $('slRadius').value = String(radius);
+      $('radiusVal').textContent = radius.toFixed(2) + 'rem';
+      $('radiusRef').textContent = t('page.themeStudio.presetRef', '预设 ') + presetRadius.toFixed(2) + 'rem';
+      $('slFont').value = String(font);
+      $('fontVal').textContent = font + 'px';
+      const rawTag = parseFloat(baseline.light['--tag-radius']);
+      const presetTag = Number.isFinite(rawTag) ? rawTag : 2;
+      const tag = state.scale.tagRadius != null ? parseFloat(state.scale.tagRadius) : presetTag;
+      $('slTag').value = String(tag);
+      $('tagVal').textContent = tag.toFixed(2) + 'rem';
+      $('tagRef').textContent = t('page.themeStudio.presetRef', '预设 ') + presetTag.toFixed(2) + 'rem'
+        + (presetTag >= 2 ? t('page.themeStudio.tagCapsule', ' · 胶囊') : presetTag === 0 ? t('page.themeStudio.tagSquare', ' · 方角') : '');
+      $('selFont').value = state.scale.sans
+        ? Object.keys(FONT_STACKS).find((k) => FONT_STACKS[k] === state.scale.sans) || ''
+        : '';
+    }
+
+    /* ===== 动作 ===== */
+    function switchTab(next) {
+      target = next;
+      for (const b of document.querySelectorAll('.ts-tab')) {
+        b.setAttribute('aria-pressed', b.dataset.target === target ? 'true' : 'false');
+      }
+      renderEditor();
+    }
+
+    function applyPreset(key) {
+      if (!PRESET_DIFFS[key]) return;
+      state.preset = key;
+      state.light = {};      // 颜色自定义针对旧预设，切换即清空（尺度自定义保留，可跨预设叠加）
+      state.dark = {};
+      baseline = key === serverActive ? serverParsed : presetTokens(key);
+      renderPresets();
+      renderScale();
+      renderEditor();
+      applyOverrides();
+      toast(t('page.themeStudio.toastPresetHead', '已切换预设「') + presetLabelOf(key) + t('page.themeStudio.toastPresetTail', '」，颜色自定义已清空（圆角与字号保留）'));
+    }
+
+    function resetAll() {
+      state.light = {};
+      state.dark = {};
+      state.scale = { radius: null, tagRadius: null, fontSize: null, sans: null };
+      renderScale();
+      renderEditor();
+      applyOverrides();
+      toast(t('page.themeStudio.toastReset', '已重置全部自定义，回到当前预设原值'));
+    }
+
+    /* ===== 导出（themes/*.css 同构全文：基线 + 覆盖合并；字号不入文件） ===== */
+    function buildExportText() {
+      const today = new Date().toISOString().slice(0, 10);
+      const root = [];
+      const dark = [];
+      const presetRadius = baseline.light['--radius'];
+      root.push('  --radius: ' + (state.scale.radius != null ? state.scale.radius : presetRadius) + ';');
+      // --tag-radius 与 --radius 同为主题文件标配，恒导出；--font-sans 仅在改过时导出
+      root.push('  --tag-radius: ' + (state.scale.tagRadius != null ? state.scale.tagRadius : (baseline.light['--tag-radius'] ?? '2rem')) + ';');
+      if (state.scale.sans) root.push('  --font-sans: ' + state.scale.sans + ';'); // 字体非主题文件标配，仅在改过时导出
+      for (const [k, v] of Object.entries(baseline.light)) {
+        if (k === '--radius') continue;
+        root.push('  ' + k + ': ' + (state.light[k] ?? v) + ';');
+      }
+      for (const [k, v] of Object.entries(baseline.dark)) {
+        dark.push('  ' + k + ': ' + (state.dark[k] ?? v) + ';');
+      }
+      const presetLabel = state.preset ? (PRESETS.find((p) => p.key === state.preset)?.label || state.preset) : '服务端主题';
+      const lines = [
+        '/* basecoat-pm 主题：自定义（' + today + '，由主题配置页导出，基于「' + presetLabel + '」）',
+        ' * 加载顺序：vendor/basecoat/basecoat-lyra.cdn.min.css → 本文件',
+        ' * 仅覆盖 :root / .dark 的 token 值；组件样式来自 basecoat',
+        ' */',
+        ':root {', ...root, '}',
+        '.dark {', ...dark, '}',
+      ];
+      return lines.join('\n');
+    }
+
+    async function exportCss() {
+      if (overriddenCount() === 0) {
+        toast(t('page.themeStudio.toastNothing', '当前与预设一致，没有可导出的自定义'));
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(buildExportText());
+        toast(t('page.themeStudio.toastCopied', '已复制完整主题 CSS 到剪贴板，可存为 themes/xxx.css 并指向 server.theme'));
+      } catch (err) {
+        error.show(t('page.themeStudio.copyFailPrefix', '复制失败：') + (err && err.message ? err.message : t('page.themeStudio.clipboardUnavailable', '剪贴板不可用')) + t('page.themeStudio.copyFailSuffix', '。可改用浏览器手动复制。'));
+      }
+    }
+
+    /* ===== 事件（委托挂在稳定容器，重渲染后依然有效） ===== */
+    $('presetGrid').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-preset]');
+      if (!btn || btn.disabled) return;
+      applyPreset(btn.dataset.preset);
+    });
+    document.querySelector('.ts-tabs').addEventListener('click', (e) => {
+      const btn = e.target.closest('.ts-tab');
+      if (btn) switchTab(btn.dataset.target);
+    });
+    $('editorGroups').addEventListener('change', (e) => {
+      const item = e.target.closest('.ts-item');
+      if (!item) return;
+      const token = item.dataset.token;
+      if (e.target.dataset.hex != null) {
+        // 取色器：hex → oklch 覆盖（透明度重置为 1）
+        state[target][token] = hexToOklch(e.target.value);
+        syncItem(item, token);
+        applyOverrides();
+      } else if (e.target.dataset.oklch != null) {
+        // oklch 文本：失焦时非法值回退为当前生效值
+        const parsed = parseOklch(e.target.value);
+        if (!parsed) {
+          e.target.value = resolveToken(token);
+          item.classList.remove('is-invalid');
+          toast(t('page.themeStudio.toastInvalidOklch', 'oklch 格式无效，已还原为生效值（如 oklch(0.52 0.105 223.1)）'));
+        }
+      }
+    });
+    $('editorGroups').addEventListener('input', (e) => {
+      const item = e.target.closest('.ts-item');
+      if (!item) return;
+      const token = item.dataset.token;
+      if (e.target.dataset.oklch != null) {
+        // 实时：合法则生效并同步取色器；非法只标红不生效
+        const parsed = parseOklch(e.target.value);
+        if (parsed) {
+          state[target][token] = String(e.target.value).trim();
+          item.classList.remove('is-invalid');
+          item.querySelector('[data-hex]').value = oklchToHex(parsed.L, parsed.C, parsed.H);
+          ensureReset(item, token, true); // 首次覆盖时出现 ↺（不重建输入框，保住输入焦点）
+          applyOverrides();
+        } else {
+          item.classList.add('is-invalid');
+        }
+      }
+      // data-hex 的 input 事件（拖动取色器）也实时生效
+      if (e.target.dataset.hex != null) {
+        state[target][token] = hexToOklch(e.target.value);
+        item.querySelector('[data-oklch]').value = state[target][token];
+        ensureReset(item, token, true);
+        applyOverrides();
+      }
+    });
+    $('editorGroups').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-reset]');
+      if (!btn) return;
+      delete state[target][btn.dataset.reset];
+      renderEditor(); // 重渲染以同步 ↺ / 值
+      applyOverrides();
+    });
+
+    // 就地同步单项（不重渲染，保住取色器交互）：值 + ↺ 按钮一起对齐
+    function ensureReset(item, token, show) {
+      const btn = item.querySelector('[data-reset]');
+      if (show && !btn) {
+        const b = document.createElement('button');
+        b.className = 'ts-item-reset';
+        b.type = 'button';
+        b.dataset.reset = token;
+        b.title = t('page.themeStudio.resetTitle', '恢复预设值');
+        b.innerHTML = '<i class="ri-arrow-go-back-line" aria-hidden="true"></i>';
+        item.querySelector('.ts-item-name').appendChild(b);
+      }
+      if (!show && btn) btn.remove();
+    }
+    function syncItem(item, token) {
+      ensureReset(item, token, !!state[target][token]);
+      const cur = resolveToken(token);
+      item.querySelector('[data-oklch]').value = cur;
+      const hex = oklchTextToHex(cur);
+      if (hex) item.querySelector('[data-hex]').value = hex;
+    }
+
+    $('slRadius').addEventListener('input', (e) => {
+      state.scale.radius = parseFloat(e.target.value).toFixed(2) + 'rem';
+      $('radiusVal').textContent = parseFloat(e.target.value).toFixed(2) + 'rem';
+      applyOverrides();
+    });
+    $('slTag').addEventListener('input', (e) => {
+      state.scale.tagRadius = parseFloat(e.target.value).toFixed(2) + 'rem';
+      $('tagVal').textContent = parseFloat(e.target.value).toFixed(2) + 'rem';
+      applyOverrides();
+    });
+    $('slFont').addEventListener('input', (e) => {
+      state.scale.fontSize = e.target.value + 'px';
+      $('fontVal').textContent = e.target.value + 'px';
+      applyOverrides();
+    });
+    $('selFont').addEventListener('change', (e) => {
+      const v = e.target.value;
+      state.scale.sans = v ? FONT_STACKS[v] : null; // 选「默认」= 删除覆盖，回到 basecoat/主题字体
+      applyOverrides();
+      toast(v ? t('page.themeStudio.toastFontSwitched', '字体已切换（本机无该字体时按栈自动回退）') : t('page.themeStudio.toastFontDefault', '字体已恢复默认'));
+    });
+    $('btnReset').addEventListener('click', resetAll);
+    $('btnExport').addEventListener('click', exportCss);
+    $('btnRetry').addEventListener('click', boot);
+
+    /* ===== 颜色分组（覆盖主题文件全部 31 个颜色 token；sidebar-primary 按规格归品牌组） ===== */
+    const COLOR_GROUPS = [
+      { key: 'base', label: '基础', tokens: ['--background', '--foreground'] },
+      { key: 'surface', label: '表面', tokens: ['--card', '--card-foreground', '--popover', '--popover-foreground', '--secondary', '--secondary-foreground', '--muted', '--muted-foreground', '--accent', '--accent-foreground', '--border', '--input'] },
+      { key: 'brand', label: '品牌', tokens: ['--primary', '--primary-foreground', '--ring', '--sidebar-primary', '--sidebar-primary-foreground'] },
+      { key: 'status', label: '状态', tokens: ['--destructive'] },
+      { key: 'chart', label: '图表', tokens: ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5'] },
+      { key: 'sidebar', label: '侧栏', tokens: ['--sidebar', '--sidebar-foreground', '--sidebar-accent', '--sidebar-accent-foreground', '--sidebar-border', '--sidebar-ring'] },
+    ];
+
+    /* ===== 启动：解析 /theme.css（真实可达）；探测当前预设；恢复持久化 ===== */
+    async function boot() {
+      $('tsLoading').style.display = '';
+      $('tsError').style.display = 'none';
+      $('tsMain').hidden = true;
+      $('tsStatus').textContent = t('page.themeStudio.loading', '加载中…');
+      $('tsLoading').textContent = '';
+      for (let i = 0; i < 4; i++) {
+        const sk = document.createElement('div');
+        sk.className = 'skeleton';
+        sk.style.height = '92px';
+        $('tsLoading').appendChild(sk);
+      }
+      try {
+        serverParsed = parseThemeCss(await getThemeText('/theme.css'));
+        // 与预设逐一比较（键序无关）：服务端主题键 ⊇ 预设键且这些键的值全部相等 ⇒ 匹配该预设。
+        // 预设词表之外的多余键（如导出产物里的 --font-sans）不影响「这是哪个预设」的判定；
+        // 服务端缺预设键或任一值不同 ⇒ 不匹配（落到服务端自定义中性态）。
+        const coversPreset = (preset, server) => Object.keys(preset).every((k) => server[k] === preset[k]);
+        serverActive = null;
+        for (const p of PRESETS) {
+          const t = presetTokens(p.key);
+          if (coversPreset(t.light, serverParsed.light) && coversPreset(t.dark, serverParsed.dark)) { serverActive = p.key; break; }
+        }
+
+        const stored = readStored();
+        // 首次访问：高亮服务端当前预设；localStorage 里的 null 表示用户上次停在「服务端自定义」，尊重之
+        state.preset = stored ? stored.preset : serverActive;
+        state.scale = stored ? stored.scale : { radius: null, tagRadius: null, fontSize: null, sans: null };
+        state.light = stored ? stored.light : {};
+        state.dark = stored ? stored.dark : {};
+        baseline = state.preset
+          ? (state.preset === serverActive ? serverParsed : presetTokens(state.preset))
+          : serverParsed;
+
+        renderPresets();
+        renderScale();
+        renderEditor();
+        applyOverrides(false);
+        error.hide(); // 重试成功后清掉上一次的失败提示
+        $('tsLoading').style.display = 'none';
+        $('tsMain').hidden = false;
+        if (stored && overriddenCount() > 0) toast(t('page.themeStudio.toastRestoredHead', '已恢复上次的自定义主题（') + overriddenCount() + t('page.themeStudio.toastRestoredTail', ' 项）'));
+        else if (stored && state.preset && state.preset !== serverActive) toast(t('page.themeStudio.toastPresetRestored', '已恢复上次选择的预设'));
+      } catch (err) {
+        $('tsLoading').style.display = 'none';
+        $('tsError').style.display = '';
+        $('tsErrorMsg').textContent = (err && err.message ? err.message : t('page.themeStudio.unknownError', '未知错误'));
+        error.show(t('page.themeStudio.failPrefix', '主题文件加载失败：') + (err && err.message ? err.message : t('page.themeStudio.unknownError', '未知错误')));
+      }
+    }
+
+    async function getThemeText(url) {
+      let res;
+      try {
+        res = await fetch(url);
+      } catch {
+        throw new Error(t('page.themeStudio.errNetwork', '网络请求失败：') + url);
+      }
+      if (!res.ok) throw new Error(t('page.themeStudio.errHttpHead', '请求失败（HTTP ') + res.status + t('page.themeStudio.errHttpTail', '）：') + url);
+      const text = await res.text();
+      if (/^\s*<!doctype html/i.test(text)) throw new Error(t('page.themeStudio.errFallbackPage', '路径返回了兜底页面而非 CSS：') + url);
+      return text;
+    }
+
+    /* ===== 功能开关门卫：features.theme_studio === false → 渲染未启用卡片并隐藏主内容 =====
+     * zpm.config.yaml 的 features 节缺省 true（fail-open：/api/_meta 拉取失败或无 features
+     * 字段都照常进入主题配置）；仅显式 false 时隐藏 #pageContent、渲染居中卡片，不再 boot。 */
+    async function featureGate() {
+      let meta = null;
+      try {
+        meta = await getJSON('/api/_meta');
+      } catch { /* fail-open */ }
+      if (!(meta && meta.features && meta.features.theme_studio === false)) return false;
+      const content = document.getElementById('pageContent');
+      if (content) content.style.display = 'none';
+      const card = document.createElement('section');
+      card.className = 'card ts-disabled';
+      card.setAttribute('role', 'status');
+      const head = document.createElement('p');
+      head.style.cssText = 'margin:0 0 8px;font-size:14px;font-weight:600;';
+      head.textContent = t('page.themeStudio.gateTitle', '主题配置未启用');
+      const tip = document.createElement('p');
+      tip.style.cssText = 'margin:0;font-size:13px;color:var(--muted-foreground);';
+      tip.textContent = t('page.themeStudio.gateText', '在 zpm.config.yaml 的 features.theme_studio 设为 true 后重启 zpm serve');
+      card.append(head, tip);
+      document.body.appendChild(card);
+      return true;
+    }
+
+    /* ===== 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） ===== */
+    function applyStaticI18n() {
+      document.title = t('page.themeStudio.title', '主题配置');
+      $('tsLoading').setAttribute('aria-label', t('page.themeStudio.loadingAria', '加载中'));
+      document.querySelector('.ts-tabs').setAttribute('aria-label', t('page.themeStudio.editTargetAria', '编辑目标'));
+      $('slRadius').setAttribute('aria-label', t('page.themeStudio.radiusAria', '圆角大小'));
+      $('slTag').setAttribute('aria-label', t('page.themeStudio.tagAria', '徽章标签圆角'));
+      $('slFont').setAttribute('aria-label', t('page.themeStudio.fontSizeAria', '基础字号'));
+      $('selFont').setAttribute('aria-label', t('page.themeStudio.fontSelAria', '界面字体'));
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim());
+      }
+    }
+
+    (async () => {
+      await ensureI18n(); // 幂等；locale 就绪后再渲染 UI 文案（功能开关探测 / 主题文件拉取在其后）
+      applyStaticI18n();
+      if (await featureGate()) return;
+      boot();
+      mountLayout({ active: 'theme-studio' });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>列表页模板</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat.cdn.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+  <script src="/vendor/mustache/mustache.min.js"></script>
+  <script src="/vendor/dayjs/dayjs.min.js"></script>
+  <script src="/vendor/xlsx/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div id="pageContent">
+    <!-- 适配：改下方 TABLE / STATUS_FIELD / STATUS_TAGS / SEARCH_FIELD / 列与模板字段；
+         USE_DEMO 确认接入真实表后改 false；正式页面严禁保留 demo_rows 假数据 -->
+    <main style="padding:16px 24px 40px;">
+      <h1 style="font-size:20px;margin:0 0 14px;" data-i18n="tpl.list.title">列表页模板</h1>
+
+      <!-- 工具栏：筛选标签组 + 关键字 like 搜索 + 导出 -->
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
+        <div id="tagGroup" role="group" aria-label="状态筛选" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+          <input id="searchInput" type="text" class="input" placeholder="关键字搜索…"
+            style="flex:1;min-width:220px;max-width:360px;">
+          <span id="statusNote" style="display:none;font-size:12px;color:var(--muted-foreground);"></span>
+          <span style="flex:1;"></span>
+          <button id="btnExport" type="button" class="btn" data-variant="outline" data-i18n="tpl.list.export">
+            导出 Excel
+          </button>
+        </div>
+      </div>
+
+      <!-- 数据表（basecoat table 结构：table-wrap 容器 + table.table） -->
+      <div class="card" style="padding:0;">
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <!-- 适配：替换列名与顺序（与 tplRow 模板、toExportRow 保持一致）；可排序列给按钮加 data-sort -->
+                <th aria-sort="none"><button type="button" class="th-sort" data-sort="name"><span data-i18n="tpl.list.colName">名称</span><span class="sort-ind" aria-hidden="true"></span></button></th>
+                <th data-i18n="tpl.list.colStatus">状态</th>
+                <th data-i18n="tpl.list.colOwner">负责人</th>
+                <th aria-sort="none" style="text-align:right;"><button type="button" class="th-sort" data-sort="amount"><span data-i18n="tpl.list.colAmount">金额（万元）</span><span class="sort-ind" aria-hidden="true"></span></button></th>
+                <th aria-sort="none"><button type="button" class="th-sort" data-sort="created_at"><span data-i18n="tpl.list.colCreatedAt">创建时间</span><span class="sort-ind" aria-hidden="true"></span></button></th>
+                <th data-i18n="tpl.list.colActions">操作</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 分页（真实模式为 API 参数：page / pageSize） -->
+      <div style="display:flex;align-items:center;gap:12px;margin-top:14px;">
+        <button id="btnPrev" type="button" class="btn" data-variant="outline" data-i18n="tpl.list.prevPage">上一页</button>
+        <span id="pageInfo" style="font-size:12px;color:var(--muted-foreground);">—</span>
+        <button id="btnNext" type="button" class="btn" data-variant="outline" data-i18n="tpl.list.nextPage">下一页</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- 行详情 dialog（basecoat dialog：原生 showModal/close，外观由 .dialog 组件负责） -->
+  <dialog id="detailDialog" class="dialog" aria-labelledby="dlgTitle">
+    <div style="min-width:340px;max-width:520px;">
+      <header>
+        <h2 id="dlgTitle" data-title data-i18n="tpl.list.recordDetail">记录详情</h2>
+      </header>
+      <section id="dlgBody"></section>
+      <footer>
+        <button type="button" class="btn" data-variant="outline" id="dlgClose" data-i18n="tpl.list.close">关闭</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- 行模板：Mustache 的 {{var}} 默认做 HTML 转义，
+       数据值严禁放进 {{{ }}} 三括号；确需不转义仅限可信静态内容 -->
+  <script type="text/template" id="tplRow">
+    {{#rows}}
+    <tr data-id="{{id}}">
+      <td style="font-weight:600;">demo-wms</td>
+      <td><span class="badge">{{statusLabel}}</span></td>
+      <td>{{owner}}</td>
+      <td style="text-align:right;">{{amountWan}}</td>
+      <td style="color:var(--muted-foreground);">{{createdAt}}</td>
+      <td><button type="button" class="btn" data-variant="outline" data-detail="{{id}}" style="font-size:12px;">{{detailLabel}}</button></td>
+    </tr>
+    {{/rows}}
+  </script>
+
+  <!-- 详情字段模板（同样 {{var}} 转义） -->
+  <script type="text/template" id="tplDetailFields">
+    <dl style="display:grid;grid-template-columns:auto 1fr;gap:10px 18px;margin:0;font-size:13px;">
+      {{#fields}}
+      <dt style="color:var(--muted-foreground);">{{label}}</dt>
+      <dd style="margin:0;word-break:break-all;">{{value}}</dd>
+      {{/fields}}
+    </dl>
+  </script>
+
+  <script type="module">
+    /* ============================================================
+     * 列表页模板（tpl-list）：搜索 + 分页 + 表头排序 + 行详情 dialog
+     * 适配三步（复制到 pages/ 后）：
+     *   1) 改下方 TABLE / STATUS_FIELD / STATUS_TAGS / SEARCH_FIELD / 列与模板字段
+     *   2) USE_DEMO 改为 false（确认 zpm 已同步该表、write.tables 含写表时才需要 POST/PATCH）
+     *   3) 删除 demo_rows 假数据（正式页面严禁保留假数据）
+     * ============================================================ */
+    import { getJSON, mountErrorBar, formatDate, formatWan, exportRowsToExcel, afterInject } from '/app.js';
+    import { ensureI18n, t } from '/i18n.js';
+    import { mountLayout } from '/layout/layout.js';
+
+    const TABLE = 'demo_rows';         // 适配：替换表名
+    const STATUS_FIELD = 'status';     // 适配：状态筛选字段名
+    const SEARCH_FIELD = 'name';       // 适配：关键字 like 搜索字段
+    const SORT = '-created_at';        // 适配：默认排序（- 表示倒序）
+    const PAGE_SIZE = 20;
+    const USE_DEMO = true;             // 适配：接入真实表后改 false
+
+    // 适配：状态枚举（key 对应 STATUS_FIELD 的取值）；labelKey 为 locales 的 UI 文案 key
+    const STATUS_TAGS = [
+      { key: '', labelKey: 'tpl.list.tagAll', label: '全部' },
+      { key: 'open', labelKey: 'tpl.list.tagOpen', label: '进行中' },
+      { key: 'done', labelKey: 'tpl.list.tagDone', label: '已完成' },
+      { key: 'archived', labelKey: 'tpl.list.tagArchived', label: '已归档' },
+    ];
+
+    // 适配：详情 dialog 展示字段（label + 视图取值函数）；labelKey 为 locales 的 UI 文案 key
+    const DETAIL_FIELDS = [
+      { labelKey: 'tpl.list.fName', label: '名称', get: (v) => v.name },
+      { labelKey: 'tpl.list.fStatus', label: '状态', get: (v) => v.statusLabel },
+      { labelKey: 'tpl.list.fOwner', label: '负责人', get: (v) => v.owner },
+      { labelKey: 'tpl.list.fAmount', label: '金额（万元）', get: (v) => v.amountWan },
+      { labelKey: 'tpl.list.fCreatedAt', label: '创建时间', get: (v) => v.createdAt },
+    ];
+
+    /* demo_rows：内置假数据，仅占位示范渲染链路；正式页面严禁保留 */
+    const demo_rows = [
+      { id: 'd1', name: '示例记录 A', status: 'open', owner: '张三', amount: 32000000000, created_at: '2026-08-01T08:00:00.000Z' },
+      { id: 'd2', name: '示例记录 B', status: 'done', owner: '李四', amount: 12500000000, created_at: '2026-08-14T09:30:00.000Z' },
+      { id: 'd3', name: '示例记录 C', status: 'open', owner: '王五', amount: 9800000000, created_at: '2026-09-02T14:20:00.000Z' },
+      { id: 'd4', name: '示例记录 D', status: 'archived', owner: '赵六', amount: null, created_at: '2026-09-18T10:00:00.000Z' },
+      { id: 'd5', name: '示例记录 E', status: 'done', owner: '张三', amount: 56000000000, created_at: '2026-10-11T16:45:00.000Z' },
+    ];
+
+    /* ===== 状态（排序初始值由 SORT 推导） ===== */
+    const state = {
+      status: '', kw: '', page: 1, total: 0, rows: [],
+      sortField: SORT.replace(/^-/, ''),
+      sortDir: SORT.startsWith('-') ? 'desc' : 'asc',
+    };
+    let noteTimer = null;
+
+    /* ===== DOM ===== */
+    const $ = (id) => document.getElementById(id);
+    const error = mountErrorBar(); // 错误条：复用 app.js（含关闭按钮）
+
+    function setNote(msg) {
+      const el = $('statusNote');
+      el.textContent = msg;
+      el.style.display = '';
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
+    }
+
+    /* ===== 视图模型（mustache 数据先映射成展示值；日期走 dayjs） ===== */
+    function toView(row) {
+      const tag = STATUS_TAGS.find((x) => x.key === row.status);
+      return {
+        id: row.id,
+        name: row.name || '—',
+        statusLabel: (tag && t(tag.labelKey, tag.label)) || row.status || '—',
+        owner: row.owner || '—',
+        amountWan: formatWan(row.amount),
+        amountWanValue: typeof row.amount === 'number' ? Math.round((row.amount / 1e10) * 10) / 10 : null,
+        createdAt: formatDate(row.created_at, 'YYYY-MM-DD HH:mm'),
+      };
+    }
+
+    /* ===== 表头排序：真实模式走 API sort 参数；演示模式客户端排序 ===== */
+    function sortParam() {
+      return (state.sortDir === 'desc' ? '-' : '') + state.sortField;
+    }
+
+    function clientSort(rows) {
+      const dir = state.sortDir === 'desc' ? -1 : 1;
+      return rows.slice().sort((a, b) => {
+        const va = a[state.sortField], vb = b[state.sortField];
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+        return String(va).localeCompare(String(vb), 'zh-CN') * dir;
+      });
+    }
+
+    function updateSortHeads() {
+      for (const btn of document.querySelectorAll('.th-sort[data-sort]')) {
+        const th = btn.closest('th');
+        const active = btn.dataset.sort === state.sortField;
+        const dir = active ? state.sortDir : null;
+        th.setAttribute('aria-sort', dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none');
+        btn.querySelector('.sort-ind').textContent = dir === 'asc' ? '↑' : dir === 'desc' ? '↓' : '';
+      }
+    }
+
+    /* ===== 取数：真实模式走 API 参数（where/like/sort/page/pageSize）；演示模式客户端过滤 ===== */
+    function buildQuery() {
+      const p = new URLSearchParams();
+      if (state.status) p.append('where', STATUS_FIELD + ':eq:' + state.status);
+      if (state.kw) p.append('where', SEARCH_FIELD + ':like:' + state.kw);
+      p.append('sort', sortParam());
+      p.append('page', String(state.page));
+      p.append('pageSize', String(PAGE_SIZE));
+      return '/api/' + TABLE + '?' + p.toString();
+    }
+
+    async function loadPage() {
+      if (USE_DEMO) {
+        // 演示模式：与真实 API 同构的 { data, total }，便于先看效果
+        const kw = state.kw.toLowerCase();
+        const filtered = demo_rows.filter((r) =>
+          (!state.status || r.status === state.status) &&
+          (!kw || typeof r[SEARCH_FIELD] === 'string' && r[SEARCH_FIELD].toLowerCase().includes(kw)));
+        state.total = filtered.length;
+        state.rows = clientSort(filtered).slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+        return;
+      }
+      // 适配提示：若服务端不支持多个 where 参数，改为 fetchAll + 客户端过滤
+      const json = await getJSON(buildQuery());
+      state.rows = Array.isArray(json.data) ? json.data : [];
+      state.total = typeof json.total === 'number' ? json.total : state.rows.length;
+    }
+
+    /* ===== 渲染（mustache 一次注入；空/加载态用 textContent 占位行） ===== */
+    function placeholderRow(text, danger) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 6;
+      td.textContent = text;
+      td.style.cssText = 'padding:28px 12px;text-align:center;color:var(--' + (danger ? 'destructive' : 'muted-foreground') + ');';
+      tr.appendChild(td);
+      return tr;
+    }
+
+    async function render() {
+      const tbody = $('tbody');
+      tbody.textContent = '';
+      tbody.appendChild(placeholderRow(t('tpl.list.loading', '加载中…'), false));
+      try {
+        await loadPage();
+      } catch (err) {
+        tbody.textContent = '';
+        tbody.appendChild(placeholderRow(t('tpl.list.loadFailed', '加载失败'), true));
+        error.show(TABLE + ' ' + t('tpl.list.loadFailedPrefix', '列表加载失败：') + err.message);
+        updatePager();
+        return;
+      }
+      tbody.textContent = '';
+      const views = state.rows.map(toView);
+      if (views.length === 0) {
+        tbody.appendChild(placeholderRow(t('tpl.list.empty', '暂无数据'), false));
+      } else {
+        // Mustache.render 的 {{var}} 已做 HTML 转义，innerHTML 注入安全
+        tbody.innerHTML = Mustache.render($('tplRow').textContent, { rows: views, detailLabel: t('tpl.list.detail', '详情') });
+        afterInject(tbody); // 注入后重建 basecoat 交互组件
+      }
+      updatePager();
+      updateSortHeads();
+    }
+
+    function updatePager() {
+      const totalPages = Math.max(1, Math.ceil(state.total / PAGE_SIZE));
+      $('pageInfo').textContent = t('tpl.list.pageInfo', '第 {page} / {total} 页 · 共 {count} 条')
+        .replace('{page}', state.page).replace('{total}', totalPages).replace('{count}', state.total);
+      $('btnPrev').disabled = state.page <= 1;
+      $('btnNext').disabled = state.page >= totalPages;
+    }
+
+    /* ===== 行详情 dialog ===== */
+    function openDetail(id) {
+      const row = state.rows.find((r) => String(r.id) === String(id));
+      if (!row) return;
+      const view = toView(row);
+      $('dlgTitle').textContent = view.name;
+      const fields = DETAIL_FIELDS.map((f) => ({ label: t(f.labelKey, f.label), value: f.get(view) }));
+      const body = $('dlgBody');
+      body.innerHTML = Mustache.render($('tplDetailFields').textContent, { fields });
+      afterInject(body); // 注入后重建 basecoat 交互组件
+      $('detailDialog').showModal();
+    }
+
+    /* ===== 筛选标签组 ===== */
+    function buildTags() {
+      const wrap = $('tagGroup');
+      wrap.textContent = '';
+      for (const tag of STATUS_TAGS) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const active = tag.key === state.status;
+        btn.className = 'btn';
+        if (!active) btn.dataset.variant = 'outline';
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        btn.textContent = t(tag.labelKey, tag.label);
+        btn.addEventListener('click', () => {
+          state.status = tag.key;
+          state.page = 1; // 筛选后重置回第 1 页
+          buildTags();
+          render();
+        });
+        wrap.appendChild(btn);
+      }
+    }
+
+    /* ===== 导出 Excel（当前筛选 + 排序 + 分页的结果集；文件名 = 前缀_dayjs 日期.xlsx） ===== */
+    // 适配：改表头中文名与字段映射
+    function toExportRow(row) {
+      const v = toView(row);
+      return {
+        [t('tpl.list.fName', '名称')]: v.name,
+        [t('tpl.list.fStatus', '状态')]: v.statusLabel,
+        [t('tpl.list.fOwner', '负责人')]: v.owner,
+        [t('tpl.list.fAmount', '金额（万元）')]: v.amountWanValue,
+        [t('tpl.list.fCreatedAt', '创建时间')]: v.createdAt,
+      };
+    }
+
+    $('btnExport').addEventListener('click', async () => {
+      try {
+        await loadPage(); // 确保导出与当前筛选/排序/分页一致
+        const rows = state.rows.map(toExportRow);
+        const file = exportRowsToExcel(rows, TABLE, t('tpl.list.exportFilePrefix', '列表导出')); // 文件名如：列表导出_2026-10-29.xlsx
+        setNote(t('tpl.list.exportedNote', '已导出当前结果集 {count} 条 → {file}')
+          .replace('{count}', rows.length).replace('{file}', () => file));
+      } catch (err) {
+        error.show(t('tpl.list.exportFailedPrefix', '导出失败：') + (err && err.message ? err.message : t('tpl.list.unknownError', '未知错误')));
+      }
+    });
+
+    /* ===== 事件 ===== */
+    let searchTimer = null;
+    $('searchInput').addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        state.kw = e.target.value.trim();
+        state.page = 1;
+        render();
+      }, 250); // 轻防抖，避免每敲一个字打一次接口
+    });
+    $('btnPrev').addEventListener('click', () => { state.page--; render(); });
+    $('btnNext').addEventListener('click', () => { state.page++; render(); });
+
+    // 表头排序：点击切换升降序（换列回默认倒序）
+    for (const btn of document.querySelectorAll('.th-sort[data-sort]')) {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.sort;
+        if (state.sortField === key) {
+          state.sortDir = state.sortDir === 'desc' ? 'asc' : 'desc';
+        } else {
+          state.sortField = key;
+          state.sortDir = 'desc';
+        }
+        state.page = 1;
+        render();
+      });
+    }
+
+    // 行详情（事件委托：mustache 注入的按钮无需逐个绑事件）
+    $('tbody').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-detail]');
+      if (btn) openDetail(btn.dataset.detail);
+    });
+    $('dlgClose').addEventListener('click', () => $('detailDialog').close());
+
+    /* ===== 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） ===== */
+    function applyStaticI18n() {
+      document.title = t('tpl.list.title', '列表页模板');
+      $('tagGroup').setAttribute('aria-label', t('tpl.list.filterAria', '状态筛选'));
+      $('searchInput').placeholder = t('tpl.list.searchPlaceholder', '关键字搜索…');
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim());
+      }
+    }
+
+    /* ===== 启动：locale 就绪后再渲染 UI 文案 ===== */
+    (async () => {
+      await ensureI18n();
+      applyStaticI18n();
+      buildTags();
+      render();
+      mountLayout({ active: null, title: t('tpl.list.title', '列表页模板') });
+    })();
+  </script>
+</body>
+</html>

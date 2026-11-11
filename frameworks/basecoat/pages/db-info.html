@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>数据字典</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat-lyra.cdn.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <link rel="stylesheet" href="/vendor/remixicon/remixicon.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+  <script src="/vendor/mustache/mustache.min.js"></script>
+  <style>
+    /* ===== 本页自有结构样式（颜色一律直接引用主题 token；半透明用 color-mix 现场派生） ===== */
+
+    /* 工具栏 */
+    .db-toolbar { display: flex; align-items: center; gap: 10px; margin: 12px 0 16px; }
+    .db-kw-wrap { position: relative; flex: 1 1 260px; max-width: 420px; min-width: 200px; }
+    .db-kw-wrap > i { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      font-size: 14px; color: var(--muted-foreground); pointer-events: none; }
+    .db-kw-wrap > input { width: 100%; padding-left: 30px; }
+
+    /* 加载骨架 / 失败面板 / 空态 */
+    .db-skel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+    .db-error { margin: 48px auto 0; max-width: 460px; text-align: center; padding: 28px 24px; }
+    .db-empty { margin: 24px 0; padding: 26px; text-align: center; font-size: 13px; color: var(--muted-foreground); }
+
+    /* 表分组与卡片网格 */
+    .db-group { margin-bottom: 26px; }
+    .db-group > h2 { margin: 0 0 10px; font-size: 15px; }
+    .db-group > h2 small { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
+    .db-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+    /* display:contents 包装：卡片与展开明细作为网格直接子项参与布局，过滤时整体隐藏 */
+    .db-wrap { display: contents; }
+    .db-wrap.is-hidden { display: none; }
+    .db-card { display: block; width: 100%; text-align: left; padding: 12px 14px; cursor: pointer;
+      transition: border-color 120ms ease; }
+    .db-card:hover { border-color: var(--ring); }
+    .db-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .db-name { font-size: 14px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .db-desc { display: block; margin-top: 6px; font-size: 12px; color: var(--muted-foreground); line-height: 1.5; }
+    .db-meta { display: block; margin-top: 8px; font-size: 11px; color: var(--muted-foreground); }
+
+    /* 字段明细（展开区横跨整行网格） */
+    .db-detail { grid-column: 1 / -1; padding: 12px 14px 14px; }
+    .db-detail-scroll { overflow-x: auto; }
+    .db-detail .table { font-size: 12.5px; }
+    .db-col { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .db-common { margin-left: 8px; font-size: 10px; }
+    .db-type { color: var(--muted-foreground); white-space: nowrap; }
+    .db-enum { margin-top: 3px; font-size: 11.5px; color: var(--muted-foreground); }
+    .db-fk { font-size: 12px; color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+    .db-none { color: var(--muted-foreground); opacity: 0.6; }
+
+    /* 表间关系 */
+    .db-rel { margin-bottom: 26px; }
+    .db-rel > h2 { margin: 0 0 10px; font-size: 15px; }
+    .db-rel > h2 small { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
+    .db-rel-card { padding: 6px 14px 14px; }
+    .db-poly { margin-left: 8px; font-size: 10px; }
+    /* 简易 ER 关系图（泳道=业务域：HTML/CSS 节点 + 内联 SVG 贝塞尔连线；零图表库，禁 mermaid/echarts 画 ER）
+       细则：knowledge/rules/db-info.md */
+    .dg-card { padding: 10px 14px 12px; }
+    .dg-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius);
+      background: color-mix(in oklab, var(--card) 55%, var(--background)); }
+    .dg-canvas { position: relative; display: flex; align-items: flex-start; gap: 26px;
+      width: max-content; min-width: 100%; padding: 14px 22px 18px; }
+    .dg-lane { width: 168px; flex: none; display: flex; flex-direction: column; gap: 8px; }
+    .dg-lane > h3 { margin: 0 0 2px; font-size: 12px; font-weight: 600; color: var(--muted-foreground);
+      letter-spacing: 0.02em; white-space: nowrap; }
+    .dg-node { border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px;
+      font-size: 12px; line-height: 1.4; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--card); color: var(--foreground); cursor: default; user-select: none;
+      word-break: break-all; /* 泳道 168px 固定宽：长表名（calendar_event_participant 等）换行不截断 */
+      transition: opacity 150ms ease, border-color 150ms ease, box-shadow 150ms ease; }
+    .dg-node.is-hot { border-color: var(--primary);
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent); }
+    .dg-svg { position: absolute; left: 0; top: 0; pointer-events: none; }
+    .dg-edge { transition: opacity 150ms ease; }
+    .dg-edge .dg-vis { fill: none; stroke: var(--muted-foreground); stroke-width: 1.3;
+      transition: stroke 150ms ease, stroke-width 150ms ease; }
+    .dg-edge .dg-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: help; }
+    .dg-edge.is-hot .dg-vis { stroke: var(--primary); stroke-width: 2; }
+    .dg-arrow-head { fill: var(--muted-foreground); transition: fill 150ms ease; }
+    .dg-edge.is-hot .dg-arrow-head { fill: var(--primary); }
+    /* 悬停聚焦：相关连线与邻接表高亮，其余淡出 */
+    .dg-canvas.has-hot .dg-node:not(.is-hot) { opacity: 0.35; }
+    .dg-canvas.has-hot .dg-edge:not(.is-hot) { opacity: 0.12; }
+    .dg-foot { margin: 8px 0 0; font-size: 11.5px; color: var(--muted-foreground); }
+
+    /* 空表态（尚未同步任何表） */
+    .db-no-tables { margin: 48px auto 0; max-width: 520px; text-align: center; padding: 32px 28px; }
+    .db-no-tables > i { font-size: 28px; color: var(--muted-foreground); }
+    .db-no-tables-title { margin: 10px 0 6px; font-size: 15px; font-weight: 600; }
+    .db-no-tables-text { margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted-foreground); }
+
+    /* 文档生成引导提示条（DOC/RELATIONS 为空时显示；引导提示非错误，不用 destructive） */
+    .db-doc-hint { margin: 0 0 26px; padding: 12px 16px; display: flex; align-items: center; gap: 10px;
+      font-size: 13px; line-height: 1.6; color: var(--foreground);
+      border-color: color-mix(in oklab, var(--primary) 30%, var(--border));
+      background: color-mix(in oklab, var(--primary) 6%, var(--card)); }
+    .db-doc-hint > i { font-size: 16px; color: var(--primary); flex: none; }
+
+    /* 功能开关降级卡（features.db_info === false） */
+    .db-gate { margin: 72px auto 0; max-width: 460px; text-align: center; padding: 32px 28px; }
+    .db-gate-title { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+    .db-gate-text { margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted-foreground); }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <main style="padding:16px 24px 40px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <h1 style="margin:0;font-size:20px;" data-i18n="page.dbInfo.title">数据字典</h1>
+        <span id="dbStatus" style="font-size:12px;color:var(--muted-foreground);" data-i18n="page.dbInfo.loading">加载中…</span>
+      </div>
+
+      <!-- 工具栏：按表名 / 字段名 / 含义过滤 -->
+      <div id="dbToolbar" class="db-toolbar">
+        <div class="db-kw-wrap">
+          <i class="ri-search-line" aria-hidden="true"></i>
+          <input id="fKw" class="input" placeholder="搜索表名 / 字段名 / 含义" aria-label="搜索数据字典">
+        </div>
+      </div>
+
+      <!-- 加载中：骨架卡片 -->
+      <div id="dbLoading" class="db-skel-grid" aria-label="加载中">
+        <!-- 骨架由脚本填充 -->
+      </div>
+
+      <!-- 失败态（可重试） -->
+      <section id="dbError" class="card db-error" style="display:none;">
+        <p style="margin:0 0 6px;font-size:14px;font-weight:600;" data-i18n="page.dbInfo.failTitle">数据字典加载失败</p>
+        <p id="dbErrorMsg" style="margin:0 0 14px;font-size:13px;color:var(--muted-foreground);word-break:break-all;"></p>
+        <button id="btnRetry" class="btn" data-variant="outline" type="button" data-i18n="page.dbInfo.retry">重试</button>
+      </section>
+
+      <!-- 功能开关降级卡（features.db_info === false 时显示，其余区块全部隐藏） -->
+      <section id="dbGate" class="card db-gate" hidden>
+        <p class="db-gate-title" data-i18n="page.dbInfo.gateTitle">数据字典未启用</p>
+        <p class="db-gate-text" data-i18n="page.dbInfo.gateText">在 zpm.config.yaml 的 features.db_info 设为 true 后重启 zpm serve</p>
+      </section>
+
+      <!-- 主内容：表分组卡片（点击展开字段表） + 表间关系 -->
+      <div id="dbMain" hidden>
+        <!-- 空表态：尚未同步任何表（新项目开箱），隐藏其余区块仅显示引导卡 -->
+        <section id="dbNoTables" class="card db-no-tables" hidden>
+          <i class="ri-database-2-line" aria-hidden="true"></i>
+          <p class="db-no-tables-title" data-i18n="page.dbInfo.noTables.title">尚未同步表结构</p>
+          <p class="db-no-tables-text" data-i18n="page.dbInfo.noTables.hint">在 zpm.config.yaml 的 sync.tables 配置后执行 zpm sync</p>
+        </section>
+        <div id="dbGroups"></div>
+        <section id="dbEmpty" class="card db-empty" hidden><span data-i18n="page.dbInfo.emptyPrefix">没有匹配「</span><span id="dbEmptyKw"></span><span data-i18n="page.dbInfo.emptySuffix">」的表或字段</span></section>
+
+        <!-- 文档生成引导提示条：tables 已同步但 DOC/RELATIONS 为空时显示（zpm-db-info 生成后自动消失） -->
+        <div id="dbDocHint" class="card db-doc-hint" hidden>
+          <i class="ri-lightbulb-line" aria-hidden="true"></i>
+          <span data-i18n="page.dbInfo.docHint">请在 opencode 中使用 /zpm-db-info 生成表字段含义、表间关系与 ER 图</span>
+        </div>
+
+        <section class="db-rel" id="dbRelSection">
+          <h2 data-i18n="page.dbInfo.relTitle">表间关系清单</h2>
+          <div class="card db-rel-card" style="overflow-x:auto;">
+            <table class="table">
+              <thead><tr><th data-i18n="page.dbInfo.relThSource">源（表.字段）</th><th data-i18n="page.dbInfo.relThTarget">目标表</th><th data-i18n="page.dbInfo.relThNote">说明</th></tr></thead>
+              <tbody id="relBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 简易 ER 关系图：泳道=业务域，HTML/CSS 节点 + 内联 SVG 贝塞尔连线（禁 mermaid）；
+             泳道与连线由 buildDiagram()/drawDiagram() 生成，仅 RELATIONS 非空时显示 -->
+        <section class="db-rel" id="dgSection">
+          <h2>
+            <span data-i18n="page.dbInfo.dg.title">关系图（简易 ER）</span>
+            <small data-i18n="page.dbInfo.dg.subtitle">泳道＝业务域 · 悬停表名高亮相关连线与邻接表 · 悬停连线查看全部外键字段</small>
+          </h2>
+          <div class="card dg-card">
+            <div id="dgWrap" class="dg-wrap" role="img">
+              <div id="dgCanvas" class="dg-canvas"><!-- 泳道节点由 buildDiagram() 生成；连线 SVG 覆盖层由 drawDiagram() 注入 --></div>
+            </div>
+            <p class="dg-foot" data-i18n="page.dbInfo.dg.hint">箭头由子表外键字段指向父表；通用外键与多态挂接字段仅列入上方关系清单，不画线</p>
+          </div>
+        </section>
+
+
+      </div>
+    </main>
+  </div>
+
+  <!-- 表卡片 + 字段明细模板：mustache 渲染（{{var}} 默认 HTML 转义；数据值严禁放三括号）
+       模板内静态 UI 词（表/行/字段/主键/外键/表头/徽章）由 renderMain 经 t() 注入视图模型 -->
+  <script type="text/template" id="tplGroups">
+    {{#groups}}
+    <section class="db-group" data-group="{{key}}">
+      <h2>{{#label}}{{label}}<small>{{tables.length}} {{unitTables}}</small></h2>{{/label}}
+      <div class="db-grid">
+        {{#tables}}
+        <div class="db-wrap" data-kw="{{kw}}">
+          <button class="card db-card" type="button" data-expand="{{name}}" aria-expanded="false">
+            <span class="db-card-top">
+              <span class="db-name">{{name}}</span>
+              <span class="badge">{{rows}} {{unitRows}}</span>
+            </span>
+            <span class="db-desc">{{desc}}</span>
+            <span class="db-meta">{{colCount}} {{unitFields}} · {{pkLabel}} {{pk}}{{#fkCount}} · {{fkCount}} {{fkLabel}}{{/fkCount}}</span>
+          </button>
+          <div class="card db-detail" id="detail-{{name}}" hidden>
+            <div class="db-detail-scroll">
+              <table class="table">
+                <thead><tr><th>{{thField}}</th><th>{{thType}}</th><th>{{thMeaning}}</th><th>{{thFkTo}}</th></tr></thead>
+                <tbody>
+                  {{#cols}}
+                  <tr>
+                    <td><code class="db-col">{{name}}</code>{{#common}}<span class="badge db-common" data-variant="outline">{{commonLabel}}</span>{{/common}}</td>
+                    <td class="db-type">{{type}}</td>
+                    <td>{{meaning}}{{#enum}}<div class="db-enum">{{enum}}</div>{{/enum}}</td>
+                    <td>{{#fk}}<span class="db-fk">→ {{fk}}</span>{{/fk}}{{^fk}}<span class="db-none">—</span>{{/fk}}</td>
+                  </tr>
+                  {{/cols}}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        {{/tables}}
+      </div>
+    </section>
+    {{/groups}}
+  </script>
+
+  <!-- 关系清单模板（静态文档性内容，{{var}} 转义渲染；吃结构化 RELATIONS：fromTable.fromField → toTable；徽章词由视图模型注入） -->
+  <script type="text/template" id="tplRelations">
+    {{#rows}}
+    <tr>
+      <td><code class="db-col">{{fromTable}}.{{fromField}}</code></td>
+      <td><code class="db-col">{{toTable}}</code>{{#poly}}<span class="badge db-poly" data-variant="outline">{{polyLabel}}</span>{{/poly}}</td>
+      <td>{{note}}</td>
+    </tr>
+    {{/rows}}
+  </script>
+
+  <script type="module">
+    /* ============================================================
+     * 数据字典页（zpm-db-info）
+     * 结构（表清单/主键/字段列表）运行时来自 GET /api/_dict，禁止写死；
+     * 行数运行时并行拉取 /api/<表>?page=1&pageSize=1 取 total。
+     * 表作用 / 字段含义 / 表间关系为文档性配置（宪法豁免条款），静态放
+     * DB_DOC / COMMON_DOC / RELATIONS / FK_MAP / TYPE_OVERRIDE / GROUPS：
+     * 新项目开箱全部为空——未同步表时显示引导空态；已同步但配置为空时
+     * 隐藏文档区块、显示 /zpm-db-info 生成引导条；配置非空后自动点亮全部区块。
+     * ============================================================ */
+    import { getJSON, mountErrorBar, afterInject } from '/app.js';
+    import { ensureI18n, t } from '/i18n.js';
+    import { mountLayout } from '/layout/layout.js';
+
+    /* ===== 文档性配置：表分组（展示顺序，缺失的表自动跳过） =====
+     * 新项目开箱为空，由 /zpm-db-info 生成后填充；DB_DOC 为空时页面不渲染分组标题（卡片平铺）。
+     * 条目形态：{ key: '分组标识', label: '分组名称', tables: ['表名A', '表名B'] } */
+    const GROUPS = [];
+
+    /* ===== 文档性配置：通用字段含义（所有表共有；_dict 没有的列自动跳过） =====
+     * 新项目开箱为空，由 /zpm-db-info 生成后填充。条目形态（键 = 字段名）：
+     * { created_at: { meaning: '创建时间' } } */
+    const COMMON_DOC = {};
+
+    /* ===== 文档性配置：各表作用与字段含义 =====
+     * 新项目开箱为空，由 /zpm-db-info 生成后填充（宪法豁免条款的文档性配置）；
+     * 本对象非空时页面才渲染文档与分组标题。条目形态（键 = 表名）：
+     * { 某表: { desc: '表作用说明', columns: { 某字段: { meaning: '字段含义', enum: '枚举值甲 · 枚举值乙' } } } } */
+    const DB_DOC = {};
+
+    /* ===== 文档性配置：外键指向（按字段名匹配） =====
+     * 新项目开箱为空，由 /zpm-db-info 生成后填充。条目形态（键 = 字段名，值 = 目标表名）：
+     * { 某表_id: '某表' } */
+    const FK_MAP = {};
+
+    /* ===== 文档性配置：类型展示特例（其余类型由 colType 按字段名后缀推断；清单本身仍运行时来自 _dict） =====
+     * 新项目开箱为空，由 /zpm-db-info 生成后填充。条目形态（键 = 字段名，值 = 展示类型）：
+     * { 金额字段: 'INTEGER · 金额' } */
+    const TYPE_OVERRIDE = {};
+
+    /* ===== 文档性配置：表间关系（结构化条目；关系清单与简易 ER 图共用同一事实源） =====
+     * 新项目开箱为空，由 /zpm-db-info 生成后填充；非空时页面才显示关系清单与简易 ER 图（零外部依赖、无失败态）。
+     * 条目形态：{ fromTable, fromField, toTable, note, poly?, generic? }
+     * - fromTable.fromField 为子表外键字段，toTable 为父表；ER 图箭头由子表指向父表
+     * - poly: true 多态挂接字段（清单带「多态」徽章、不画线）；generic: true 只进清单、不画线 */
+    const RELATIONS = [];
+
+    /* ===== 开箱空态检测：配置非空才启用对应区块（zpm-db-info 生成后自动点亮） =====
+     * hasDoc → 文档渲染与分组标题；hasRelations → 关系清单 + 简易 ER 图 */
+    const hasDoc = Object.keys(DB_DOC).length > 0;
+    const hasRelations = RELATIONS.length > 0;
+
+    /* ===== 状态 ===== */
+    const $ = (id) => document.getElementById(id);
+    const error = mountErrorBar();
+
+    /* ===== 功能开关（fail-open：配置缺失恒 true，仅显式 false 才降级；后端车道在 _meta/_dict 响应带 features） ===== */
+    const metaPreset = getJSON('/api/_meta').catch(() => null); // bootstrap 最早处并行预取；_meta 失败视为启用，不阻断页面
+    function renderFeatureOff() {
+      for (const id of ['dbToolbar', 'dbLoading', 'dbError', 'dbMain']) {
+        const el = $(id);
+        if (el) { el.hidden = true; el.style.display = 'none'; }
+      }
+      $('dbStatus').textContent = t('page.dbInfo.statusDisabled', '未启用');
+      $('dbGate').hidden = false;
+    }
+
+    /* ===== 字段类型展示：TYPE_OVERRIDE 特例（可空）+ 按字段名后缀的通用推断 ===== */
+    function colType(col) {
+      if (TYPE_OVERRIDE[col]) return TYPE_OVERRIDE[col];
+      if (col === "id") return "INTEGER · 主键";
+      if (col.endsWith("_id") || col.endsWith("_uid")) return "INTEGER · 外键";
+      if (col.endsWith("_path")) return "VARCHAR · 层级路径";
+      if (col === "active" || col === "share" || /^(is|has|can|use|show|auto)_/.test(col) || col.endsWith("_ok")) return "BOOLEAN";
+      if (col === "date" || col === "create_date" || col === "write_date" || col.endsWith("_date") || col.endsWith("_at")) return "时间";
+      if (/(qty|quantity|price|amount|weight|volume|factor|demand|_rank)/.test(col)) return "NUMERIC · 数值";
+      return "—";
+    }
+
+    /* ===== 视图构建（结构全部来自 _dict；含义等文档来自静态配置） ===== */
+    function colView(table, col) {
+      const common = !!COMMON_DOC[col];
+      const doc = (DB_DOC[table] && DB_DOC[table].columns && DB_DOC[table].columns[col])
+        || COMMON_DOC[col] || {};
+      return {
+        name: col,
+        common,
+        type: colType(col),
+        meaning: doc.meaning || '—',
+        enum: doc.enum || '',
+        fk: FK_MAP[col] || '',
+      };
+    }
+
+    function tableView(t) {
+      const doc = DB_DOC[t.name] || {};
+      const cols = t.columns.map((c) => colView(t.name, c));
+      return {
+        name: t.name,
+        pk: t.primaryKey || 'id',
+        desc: doc.desc || '—',
+        colCount: cols.length,
+        fkCount: cols.filter((c) => c.fk).length,
+        rows: typeof t.rows === 'number' ? t.rows : null,
+        cols,
+        kw: (t.name + ' ' + (doc.desc || '') + ' ' + cols.map((c) => c.name + ' ' + c.meaning).join(' ')).toLowerCase(),
+      };
+    }
+
+    function buildGroupsView(meta) {
+      const byName = new Map(meta.tables.map((t) => [t.name, t]));
+      const groups = [];
+      const seen = new Set();
+      for (const g of GROUPS) {
+        const tables = [];
+        for (const name of g.tables) {
+          const t = byName.get(name);
+          if (!t) continue;
+          seen.add(name);
+          tables.push(tableView(t));
+        }
+        if (tables.length) groups.push({ key: g.key, label: t('page.dbInfo.group.' + g.key, g.label), tables });
+      }
+      const rest = meta.tables.filter((t) => !seen.has(t.name)).map(tableView);
+      // 无文档配置（新项目开箱态）：rest 组不设标题 → 模板 {{#label}} 跳过 h2，卡片平铺
+      if (rest.length) groups.push({ key: 'rest', label: hasDoc ? t('page.dbInfo.group.rest', '其他') : '', tables: rest });
+      return { groups };
+    }
+
+    /* ===== 渲染 ===== */
+    function showSkeletons() {
+      const host = $('dbLoading');
+      host.textContent = '';
+      for (let i = 0; i < 9; i++) {
+        const sk = document.createElement('div');
+        sk.className = 'skeleton';
+        sk.style.height = '96px';
+        host.appendChild(sk);
+      }
+    }
+
+    /* ===== 空表态：尚未同步任何表（新项目开箱）——隐藏文档/关系区块，仅显示引导空态卡 ===== */
+    function renderNoTables() {
+      for (const id of ['dbToolbar', 'dbGroups', 'dbEmpty', 'dbRelSection', 'dgSection', 'dbDocHint']) {
+        const el = $(id);
+        if (el) { el.hidden = true; el.style.display = 'none'; }
+      }
+      $('dbNoTables').hidden = false;
+      $('dbStatus').textContent = '';
+    }
+
+    function renderMain(meta) {
+      // 从空态重入（重试场景）时恢复表清单区可见性（可能被 renderNoTables 置 display:none）
+      const tb = $('dbToolbar');
+      if (tb) { tb.hidden = false; tb.style.display = ''; }
+      const groupsHost = $('dbGroups');
+      if (groupsHost) { groupsHost.hidden = false; groupsHost.style.display = ''; }
+      // 模板内静态 UI 词经 t() 注入视图模型（mustache 不能调 t；表分组标题已在 buildGroupsView 内 t()）
+      const tplData = Object.assign(buildGroupsView(meta), {
+        unitTables: t('page.dbInfo.unitTables', '表'),
+        unitRows: t('page.dbInfo.unitRows', '行'),
+        unitFields: t('page.dbInfo.unitFields', '字段'),
+        pkLabel: t('page.dbInfo.pkLabel', '主键'),
+        fkLabel: t('page.dbInfo.fkLabel', '外键'),
+        thField: t('page.dbInfo.thField', '字段'),
+        thType: t('page.dbInfo.thType', '类型'),
+        thMeaning: t('page.dbInfo.thMeaning', '含义'),
+        thFkTo: t('page.dbInfo.thFkTo', '指向'),
+        commonLabel: t('page.dbInfo.commonBadge', '通用'),
+      });
+      const groupsHtml = Mustache.render($('tplGroups').textContent, tplData);
+      const host = $('dbGroups');
+      host.textContent = '';
+      const frag = document.createElement('div');
+      frag.innerHTML = groupsHtml; // {{var}} 转义后注入
+      while (frag.firstChild) host.appendChild(frag.firstChild);
+      // 关系图表格：基线默认无 relBody（关系图按需启用），存在时才渲染
+      const relBody = $('relBody');
+      if (relBody) {
+        relBody.textContent = '';
+        // tr 行必须在表格上下文解析：fragment 用 <tbody> 载体（div 会剥掉 tr/td 标签）
+        const relFrag = document.createElement('tbody');
+        relFrag.innerHTML = Mustache.render($('tplRelations').textContent, { rows: RELATIONS, polyLabel: t('page.dbInfo.polyBadge', '多态') });
+        while (relFrag.firstChild) relBody.appendChild(relFrag.firstChild);
+      }
+      afterInject(host); // 注入后重建 basecoat 交互组件
+
+      const colTotal = meta.tables.reduce((a, t) => a + t.columns.length, 0);
+      $('dbStatus').textContent = meta.tables.length + ' ' + t('page.dbInfo.unitTables', '表') + ' · ' + colTotal + ' ' + t('page.dbInfo.unitFields', '字段');
+      applyFilter();
+      // 区块按配置启用：DOC 空 → 无分组标题（卡片平铺）；RELATIONS 空 → 关系清单与简易 ER 图整体隐藏；
+      // 两者任一为空 → 表清单区下方显示 /zpm-db-info 生成引导提示条（引导提示非错误，不用 destructive）
+      const relSec = $('dbRelSection');
+      if (relSec) { relSec.hidden = !hasRelations; relSec.style.display = hasRelations ? '' : 'none'; }
+      const dgSec = $('dgSection');
+      if (dgSec) { dgSec.hidden = !hasRelations; dgSec.style.display = hasRelations ? '' : 'none'; }
+      const docHint = $('dbDocHint');
+      const showHint = !hasDoc || !hasRelations;
+      if (docHint) { docHint.hidden = !showHint; docHint.style.display = showHint ? '' : 'none'; }
+    }
+
+    /* ===== 搜索过滤（表名 / 字段名 / 含义；分组随空隐藏） ===== */
+    function applyFilter() {
+      if (!$('dbNoTables').hidden) return; // 空表态：无卡片可过滤
+      const kw = $('fKw').value.trim().toLowerCase();
+      let visible = 0;
+      for (const wrap of document.querySelectorAll('.db-wrap')) {
+        const hit = !kw || (wrap.dataset.kw || '').includes(kw);
+        wrap.classList.toggle('is-hidden', !hit);
+        if (hit) visible++;
+        else {
+          const detail = wrap.querySelector('.db-detail');
+          if (detail) detail.hidden = true; // 过滤掉时收起展开
+        }
+      }
+      for (const sec of document.querySelectorAll('.db-group')) {
+        const any = Array.from(sec.querySelectorAll('.db-wrap')).some((w) => !w.classList.contains('is-hidden'));
+        sec.hidden = !any;
+      }
+      $('dbEmptyKw').textContent = $('fKw').value.trim();
+      $('dbEmpty').hidden = visible > 0;
+    }
+    $('fKw').addEventListener('input', applyFilter);
+
+    /* ===== 展开 / 收起字段表（事件委托挂在 body，重渲染后依然有效） ===== */
+    document.body.addEventListener('click', (e) => {
+      const btn = e.target.closest('.db-card');
+      if (!btn) return;
+      const detail = $('detail-' + btn.dataset.expand);
+      if (!detail) return;
+      const opening = detail.hidden;
+      for (const d of document.querySelectorAll('.db-detail')) d.hidden = true; // 手风琴：同时只开一个
+      detail.hidden = !opening;
+      btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    });
+
+    /* ============================================================
+     * 简易 ER 关系图（knowledge/rules/db-info.md：泳道=业务域 HTML/CSS 节点
+     * + 内联 SVG 贝塞尔连线；零图表库、零外部依赖、无失败态，禁 mermaid/echarts 画 ER）
+     * ============================================================ */
+    const SVG_NS = 'http://www.w3.org/2000/svg'; // XML 命名空间常量（非网络请求）
+    const dgNodes = new Map(); // 表名 → 泳道节点元素
+
+    /** 画线关系：RELATIONS 过滤 generic 后按（子表 → 父表）聚合外键字段，同对多条 FK 合并一条线 */
+    function dgEdges() {
+      const byPair = new Map();
+      for (const r of RELATIONS) {
+        if (r.generic) continue;
+        const key = r.fromTable + '→' + r.toTable;
+        if (!byPair.has(key)) byPair.set(key, { from: r.fromTable, to: r.toTable, fields: [] });
+        byPair.get(key).fields.push(r.fromField);
+      }
+      return [...byPair.values()];
+    }
+
+    /** 泳道节点：GROUPS ∩ 已同步表（缺失表自动跳过、未知表不画，与表卡片同口径；泳道复用 GROUPS 单一事实源） */
+    function buildDiagram(tables) {
+      const canvas = $('dgCanvas');
+      canvas.textContent = '';
+      dgNodes.clear();
+      const synced = new Set(tables.map((x) => x.name));
+      for (const lane of GROUPS) {
+        const names = lane.tables.filter((n) => synced.has(n));
+        if (!names.length) continue;
+        const sec = document.createElement('div');
+        sec.className = 'dg-lane';
+        const h = document.createElement('h3');
+        h.textContent = t('page.dbInfo.group.' + lane.key, lane.label);
+        sec.appendChild(h);
+        for (const name of names) {
+          const node = document.createElement('div');
+          node.className = 'dg-node';
+          node.dataset.table = name;
+          node.title = (DB_DOC[name] && DB_DOC[name].desc) || name; // title = 完整表作用
+          node.textContent = name;
+          sec.appendChild(node);
+          dgNodes.set(name, node);
+        }
+        canvas.appendChild(sec);
+      }
+    }
+
+    /** 连线绘制：节点矩形取 getBoundingClientRect 差值（画布无边框，与 SVG 原点对齐，滚动安全）；
+     *  同对多外键已合并，无重复线；svg innerHTML 仅静态受信 markup（marker defs），无接口数据 */
+    function drawDiagram() {
+      const canvas = $('dgCanvas');
+      if (!dgNodes.size || !canvas.childElementCount) return;
+      const cr = canvas.getBoundingClientRect();
+      if (!cr.width || !cr.height) return; // 区块隐藏（空态 / 功能降级）时跳过
+      let svg = canvas.querySelector('svg.dg-svg');
+      if (!svg) {
+        svg = document.createElementNS(SVG_NS, 'svg');
+        svg.setAttribute('class', 'dg-svg');
+        svg.innerHTML = '<defs><marker id="dgArrow" viewBox="0 0 10 10" refX="8.5" refY="5"'
+          + ' markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+          + '<path d="M0,0 L10,5 L0,10 Z" class="dg-arrow-head"/></marker></defs>';
+        canvas.appendChild(svg);
+      }
+      svg.setAttribute('width', cr.width);
+      svg.setAttribute('height', cr.height);
+      svg.setAttribute('viewBox', '0 0 ' + cr.width + ' ' + cr.height);
+      for (const g of [...svg.querySelectorAll('g.dg-edge')]) g.remove(); // 重绘前清旧连线（保留 defs）
+      const rects = new Map();
+      for (const [name, el] of dgNodes) {
+        const nr = el.getBoundingClientRect();
+        rects.set(name, { x: nr.left - cr.left, y: nr.top - cr.top, w: nr.width, h: nr.height });
+      }
+      const edges = dgEdges();
+      // 同侧出/入锚点分散：按（节点, 侧）分组，组内序号决定沿边横向偏移比例，避免多点重叠
+      const outs = new Map(), ins = new Map();
+      for (const e of edges) {
+        if (!outs.has(e.from)) outs.set(e.from, []);
+        if (!ins.has(e.to)) ins.set(e.to, []);
+        outs.get(e.from).push(e);
+        ins.get(e.to).push(e);
+      }
+      const laneOf = new Map();
+      GROUPS.forEach((lane, li) => { for (const n of lane.tables) laneOf.set(n, li); });
+      for (const e of edges) {
+        const a = rects.get(e.from), b = rects.get(e.to);
+        if (!a || !b) continue;
+        let d;
+        if (e.from === e.to) {
+          // 自引用：表框右侧小环（右侧 36px 两个控制点，30%/70% 高度进出）
+          const x = a.x + a.w;
+          const y1 = a.y + a.h * 0.3;
+          const y2 = a.y + a.h * 0.7;
+          d = 'M' + x + ',' + y1 + ' C' + (x + 36) + ',' + y1 + ' ' + (x + 36) + ',' + y2 + ' ' + x + ',' + y2;
+        } else if (laneOf.get(e.from) === laneOf.get(e.to)) {
+          // 同泳道：上出下进，竖向贝塞尔 k = max(26, 高度差 / 2)
+          const ol = outs.get(e.from), il = ins.get(e.to);
+          const x1 = a.x + a.w * ((ol.indexOf(e) + 1) / (ol.length + 1));
+          const x2 = b.x + b.w * ((il.indexOf(e) + 1) / (il.length + 1));
+          let y1, y2;
+          if (a.y >= b.y) { y1 = a.y; y2 = b.y + b.h; } // 子在下：出子顶、进父底
+          else { y1 = a.y + a.h; y2 = b.y; }            // 子在上：出子底、进父顶
+          const k = Math.max(26, Math.abs(y1 - y2) / 2);
+          const s = y2 > y1 ? 1 : -1;
+          d = 'M' + x1 + ',' + y1 + ' C' + x1 + ',' + (y1 + s * k) + ' ' + x2 + ',' + (y2 - s * k) + ' ' + x2 + ',' + y2;
+        } else {
+          // 跨泳道：子在父左则出右进左（反之出左进右），水平贝塞尔 k = clamp(30, 120, dx × 0.4)
+          const toRight = a.x < b.x;
+          const y1 = a.y + a.h / 2, y2 = b.y + b.h / 2;
+          const x1 = toRight ? a.x + a.w : a.x;
+          const x2 = toRight ? b.x : b.x + b.w;
+          const k = Math.min(120, Math.max(30, Math.abs(x2 - x1) * 0.4));
+          const s = toRight ? 1 : -1;
+          d = 'M' + x1 + ',' + y1 + ' C' + (x1 + s * k) + ',' + y1 + ' ' + (x2 - s * k) + ',' + y2 + ' ' + x2 + ',' + y2;
+        }
+        const g = document.createElementNS(SVG_NS, 'g');
+        g.setAttribute('class', 'dg-edge');
+        g.dataset.from = e.from;
+        g.dataset.to = e.to;
+        const title = document.createElementNS(SVG_NS, 'title'); // 原生 tooltip（零 JS）：子表 → 父表：全部外键字段
+        title.textContent = e.from + ' → ' + e.to + '：' + e.fields.join(', ');
+        const vis = document.createElementNS(SVG_NS, 'path');
+        vis.setAttribute('class', 'dg-vis');
+        vis.setAttribute('d', d);
+        vis.setAttribute('marker-end', 'url(#dgArrow)');
+        const hit = document.createElementNS(SVG_NS, 'path'); // 透明宽击区：悬停出 title + 触发高亮
+        hit.setAttribute('class', 'dg-hit');
+        hit.setAttribute('d', d);
+        g.append(title, vis, hit);
+        svg.appendChild(g);
+      }
+    }
+
+    /* ---- 悬停高亮：悬停表框 → 相关连线与邻接表 is-hot、其余淡出；悬停连线 → 连线 + 两端表 ---- */
+    function dgSetHot(canvas, nameSet, edgeSet) {
+      canvas.classList.add('has-hot');
+      for (const el of canvas.querySelectorAll('.is-hot')) el.classList.remove('is-hot');
+      for (const name of nameSet) {
+        const el = dgNodes.get(name);
+        if (el) el.classList.add('is-hot');
+      }
+      for (const g of canvas.querySelectorAll('.dg-edge')) {
+        if (edgeSet.has(g)) g.classList.add('is-hot');
+      }
+    }
+    function dgClearHot(canvas) {
+      canvas.classList.remove('has-hot');
+      for (const el of canvas.querySelectorAll('.is-hot')) el.classList.remove('is-hot');
+    }
+    function dgBindHover() {
+      const canvas = $('dgCanvas');
+      canvas.addEventListener('mouseover', (ev) => {
+        const hit = ev.target.closest('.dg-hit');
+        if (hit) {
+          const g = hit.closest('.dg-edge');
+          dgSetHot(canvas, new Set([g.dataset.from, g.dataset.to]), new Set([g]));
+          return;
+        }
+        const node = ev.target.closest('.dg-node');
+        if (node) {
+          const name = node.dataset.table;
+          const names = new Set([name]);
+          const hotEdges = new Set();
+          for (const g of canvas.querySelectorAll('.dg-edge')) {
+            if (g.dataset.from === name || g.dataset.to === name) {
+              hotEdges.add(g);
+              names.add(g.dataset.from);
+              names.add(g.dataset.to);
+            }
+          }
+          dgSetHot(canvas, names, hotEdges);
+          return;
+        }
+        dgClearHot(canvas);
+      });
+      canvas.addEventListener('mouseleave', () => dgClearHot(canvas));
+    }
+
+    /** 图初始化 + 三处重绘：首帧 rAF、document.fonts.ready、window resize（rAF 节流） */
+    function dgInit(tables) {
+      buildDiagram(tables);
+      dgBindHover();
+      requestAnimationFrame(drawDiagram);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => drawDiagram());
+      let raf = 0;
+      window.addEventListener('resize', () => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => { raf = 0; drawDiagram(); });
+      });
+    }
+
+    /* ===== 加载主流程（/_dict 一次拉全部表结构 + 实时行数；三态：加载/错误/主视图） ===== */
+    async function load() {
+      $('dbLoading').style.display = '';
+      $('dbError').style.display = 'none';
+      $('dbMain').hidden = true;
+      $('dbStatus').textContent = t('page.dbInfo.loading', '加载中…');
+      showSkeletons();
+      try {
+        const dict = await getJSON('/api/_dict');
+        if (!dict || !Array.isArray(dict.tables)) throw new Error(t('page.dbInfo.errBadDict', '_dict 返回结构异常（缺少 tables）'));
+        $('dbLoading').style.display = 'none';
+        $('dbMain').hidden = false;
+        if (!dict.tables.length) { renderNoTables(); return; } // 新项目开箱：尚未同步任何表 → 引导空态
+        renderMain(dict);
+        if (hasRelations) dgInit(dict.tables); // 泳道图零外部依赖、无失败态；区块隐藏时 drawDiagram 自动跳过；RELATIONS 空 = ER 区隐藏
+      } catch (err) {
+        $('dbLoading').style.display = 'none';
+        $('dbError').style.display = '';
+        $('dbErrorMsg').textContent = (err && err.message ? err.message : t('page.dbInfo.unknownError', '未知错误'));
+        error.show(t('page.dbInfo.failPrefix', '数据字典加载失败：') + (err && err.message ? err.message : t('page.dbInfo.unknownError', '未知错误')));
+      }
+    }
+    $('btnRetry').addEventListener('click', load);
+
+    /* ===== 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） ===== */
+    function applyStaticI18n() {
+      document.title = t('page.dbInfo.title', '数据字典');
+      $('fKw').placeholder = t('page.dbInfo.searchPlaceholder', '搜索表名 / 字段名 / 含义');
+      $('fKw').setAttribute('aria-label', t('page.dbInfo.searchAria', '搜索数据字典'));
+      $('dbLoading').setAttribute('aria-label', t('page.dbInfo.loadingAria', '加载中'));
+      const dgWrap = $('dgWrap');
+      if (dgWrap) dgWrap.setAttribute('aria-label', t('page.dbInfo.dg.aria', '数据库实体关系图（简易 ER）：泳道为业务域，悬停表名高亮相关连线'));
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim());
+      }
+    }
+
+    /* ===== 启动：先等 locale（幂等）→ 填充静态文案 → 再按功能开关分道（db_info=false 时隐藏全部区块且不发 _dict 请求），最后加载字典 ===== */
+    (async () => {
+      await ensureI18n(); // 幂等；locale 就绪后再渲染 UI 文案（_meta 预取在模块顶部已并行发出）
+      applyStaticI18n();
+      metaPreset.then((meta) => {
+        if (meta && meta.features && meta.features.db_info === false) {
+          renderFeatureOff();
+          return;
+        }
+        load();
+      });
+    })();
+    mountLayout({ active: 'db-info' });
+  </script>
+</body>
+</html>

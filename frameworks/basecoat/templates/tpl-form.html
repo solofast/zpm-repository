@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>新建记录</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat.cdn.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+</head>
+<body>
+  <div id="pageContent">
+    <!-- 适配：改 TABLE 为目标表名；按真实字段改 FIELDS（type: text|number|select|textarea）；
+         select 的 OPTIONS 选项值要与数据源枚举一致；write 关闭时本页只做演示提交 -->
+    <main class="form-page">
+      <h1 id="pageTitle" data-i18n="tpl.form.title">新建记录</h1>
+      <div id="writeModeNote" class="note" hidden data-i18n="tpl.form.writeModeNote">当前为演示模式（write 未开启），提交仅作演示。</div>
+      <form id="form" class="form-card" novalidate>
+        <!-- 字段由 FIELDS 渲染 -->
+      </form>
+    </main>
+  </div>
+  <div id="toaster"></div>
+  <script type="module">
+    import { mountLayout } from '/layout/layout.js'
+    import { getJSON, mountErrorBar, afterInject } from '/app.js'
+    import { ensureI18n, t } from '/i18n.js'
+
+    const TABLE = 'demo_rows'          // 适配：目标表
+    const FIELDS = [                   // 适配：字段配置（labelKey 为 locales 的 UI 文案 key）
+      { name: 'label', labelKey: 'tpl.form.fLabel', label: '名称', type: 'text', required: true },
+      { name: 'amount', labelKey: 'tpl.form.fAmount', label: '金额', type: 'number' },
+      { name: 'status', labelKey: 'tpl.form.fStatus', label: '状态', type: 'select', options: ['active', 'done'] },
+    ]
+    const USE_DEMO = true              // 数据未同步时置 true 演示
+
+    let mode = 'simulated'
+
+    function fieldEl(f) {
+      const wrap = document.createElement('div')
+      wrap.className = 'field'
+      const label = document.createElement('label')
+      label.htmlFor = `f-${f.name}`
+      label.textContent = t(f.labelKey, f.label) + (f.required ? ' *' : '')
+      wrap.appendChild(label)
+      let input
+      if (f.type === 'select') {
+        input = document.createElement('select')
+        for (const opt of f.options) {
+          const o = document.createElement('option')
+          o.value = o.textContent = opt
+          input.appendChild(o)
+        }
+      } else if (f.type === 'textarea') {
+        input = document.createElement('textarea')
+      } else {
+        input = document.createElement('input')
+        input.type = f.type === 'number' ? 'number' : 'text'
+      }
+      input.id = `f-${f.name}`
+      input.name = f.name
+      wrap.appendChild(input)
+      const err = document.createElement('p')
+      err.className = 'field-error'
+      err.hidden = true
+      wrap.appendChild(err)
+      return wrap
+    }
+
+    function validate(form) {
+      let ok = true
+      for (const f of FIELDS) {
+        const el = form.elements[f.name]
+        const errEl = el.closest('.field').querySelector('.field-error')
+        const empty = el.value.trim() === ''
+        if (f.required && empty) {
+          errEl.textContent = t('tpl.form.errRequired', '{field}不能为空').replace('{field}', () => t(f.labelKey, f.label))
+          errEl.hidden = false
+          ok = false
+        } else {
+          errEl.hidden = true
+        }
+      }
+      return ok
+    }
+
+    async function submit(form) {
+      if (!validate(form)) return
+      const record = {}
+      for (const f of FIELDS) {
+        record[f.name] = f.type === 'number' ? Number(form.elements[f.name].value) : form.elements[f.name].value.trim()
+      }
+      if (USE_DEMO || mode !== 'real') {
+        showToast(t('tpl.form.demoSubmitted', '演示提交成功（未写库）'))
+        return
+      }
+      try {
+        const res = await fetch(`/api/${TABLE}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(record),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        showToast(t('tpl.form.created', '已创建'))
+        form.reset()
+      } catch (e) {
+        mountErrorBar(t('tpl.form.createFailedPrefix', '创建失败：') + e.message)
+      }
+    }
+
+    function showToast(msg) {
+      // basecoat toast：#toaster 容器由 all.min.js 初始化后挂 toast()（默认 3s 自动消失、error 5s、
+      // hover 暂停；标记/样式/aria 全由 basecoat css + js 负责，本页不自实现）
+      let toaster = document.getElementById('toaster')
+      if (!toaster) {
+        toaster = document.createElement('div')
+        toaster.id = 'toaster'
+        document.body.appendChild(toaster)
+      }
+      window.basecoat?.initAll?.() // 兜底：保证任意调用时机下 toast() 已挂载
+      toaster.toast?.({ title: msg })
+    }
+
+    const form = document.getElementById('form')
+
+    /* 表单构建：locale 就绪后再执行（字段标签/按钮文案经 t() 取值） */
+    function buildForm() {
+      for (const f of FIELDS) form.appendChild(fieldEl(f))
+      const actions = document.createElement('div')
+      actions.className = 'form-actions'
+      const submitBtn = document.createElement('button')
+      submitBtn.className = 'btn'
+      submitBtn.type = 'submit'
+      submitBtn.textContent = t('tpl.form.submit', '提交')
+      const resetBtn = document.createElement('button')
+      resetBtn.className = 'btn'
+      resetBtn.dataset.variant = 'outline'
+      resetBtn.type = 'button'
+      resetBtn.textContent = t('tpl.form.reset', '重置')
+      resetBtn.addEventListener('click', () => form.reset())
+      actions.append(submitBtn, resetBtn)
+      form.appendChild(actions)
+      form.addEventListener('submit', (e) => { e.preventDefault(); submit(form) })
+      afterInject(form)
+    }
+
+    /* 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） */
+    function applyStaticI18n() {
+      document.title = t('tpl.form.title', '新建记录')
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim())
+      }
+    }
+
+    /* 启动：locale 就绪后再渲染 UI 文案 */
+    ;(async () => {
+      await ensureI18n()
+      applyStaticI18n()
+      buildForm()
+      getJSON('/api/_meta').then((m) => {
+        mode = m.writeMode ?? 'simulated'
+        if (mode !== 'real') document.getElementById('writeModeNote').hidden = false
+        mountLayout({ active: null, title: t('tpl.form.title', '新建记录') })
+      }).catch(() => mountLayout({ active: null, title: t('tpl.form.title', '新建记录') }))
+    })()
+  </script>
+</body>
+</html>

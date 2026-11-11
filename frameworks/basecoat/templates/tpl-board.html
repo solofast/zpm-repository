@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>看板模板</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat.cdn.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+  <script src="/vendor/mustache/mustache.min.js"></script>
+  <script src="/vendor/dayjs/dayjs.min.js"></script>
+  <script src="/vendor/sortable/Sortable.min.js"></script>
+  <style>
+    /* sortable 拖拽占位样式（库名为 sortable-ghost，此处只是半透明效果） */
+    .sortable-ghost { opacity: 0.4; }
+    .sortable-chosen { cursor: grabbing; }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <!-- 适配：改 TABLE / STATUS_FIELD / COLUMNS（列 key = 状态字段取值）与 CARD 字段映射；
+         USE_DEMO 确认接入真实表后改 false 并删除 demo_rows；确认 TABLE 在 write.tables 白名单内（PATCH 需要） -->
+    <main style="padding:16px 24px 40px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        <h1 style="font-size:20px;margin:0;" data-i18n="tpl.board.title">看板模板</h1>
+        <span id="loadStatus" style="font-size:12px;color:var(--muted-foreground);" data-i18n="tpl.board.loading">加载中…</span>
+      </div>
+      <!-- 看板：多列，拖拽落组后 PATCH 状态字段（窄屏横向滚动） -->
+      <div id="board" style="display:flex;gap:14px;align-items:flex-start;overflow-x:auto;padding-bottom:8px;"></div>
+    </main>
+  </div>
+
+  <!-- 卡片模板：mustache 渲染（{{var}} 默认 HTML 转义；数据值严禁放 {{{ }}}） -->
+  <script type="text/template" id="tplCard">
+    <div class="card" data-id="{{id}}" style="padding:10px 12px;cursor:grab;gap:0;">
+      <div style="font-size:13px;font-weight:600;line-height:1.45;word-break:break-all;">{{title}}</div>
+      <div style="margin-top:2px;font-size:12px;color:var(--muted-foreground);">{{subtitle}}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:8px;">
+        <span style="font-size:12px;color:var(--muted-foreground);">{{meta}}</span>
+        <span class="badge">{{statusLabel}}</span>
+      </div>
+    </div>
+  </script>
+
+  <script type="module">
+    /* ============================================================
+     * 看板模板（tpl-board）：Sortable group:'board' 跨列拖拽 + onEnd PATCH 失败回滚
+     * 适配三步（复制到 pages/ 后）：
+     *   1) 改 TABLE / STATUS_FIELD / COLUMNS（列 key = 状态字段取值）
+     *   2) 改 CARD 字段映射（title/subtitle/meta）
+     *   3) USE_DEMO 改 false 并删除 demo_rows；确认 TABLE 在 write.tables 白名单内（PATCH 需要）
+     * ============================================================ */
+    import { fetchAll, mountErrorBar, formatDate, afterInject } from '/app.js';
+    import { ensureI18n, t } from '/i18n.js';
+    import { mountLayout } from '/layout/layout.js';
+
+    const TABLE = 'demo_rows';        // 适配：替换表名
+    const STATUS_FIELD = 'status';    // 适配：状态字段名（拖拽落组后 PATCH 该字段）
+    const USE_DEMO = true;            // 适配：接入真实表后改 false
+
+    // 适配：列配置（key 与 STATUS_FIELD 取值一致；labelKey 为 locales 的 UI 文案 key）
+    const COLUMNS = [
+      { key: 'todo', labelKey: 'tpl.board.colTodo', label: '待处理' },
+      { key: 'doing', labelKey: 'tpl.board.colDoing', label: '进行中' },
+      { key: 'done', labelKey: 'tpl.board.colDone', label: '已完成' },
+    ];
+
+    // 适配：卡片字段映射
+    const CARD = {
+      title: 'name',       // 主标题字段
+      subtitle: 'owner',   // 副标题字段
+      meta: 'created_at',  // 右下角元信息字段（日期走 dayjs）
+    };
+
+    /* demo_rows：内置假数据，仅占位示范；正式页面严禁保留 */
+    const demo_rows = [
+      { id: 'd1', name: '示例卡片 A', owner: '张三', status: 'todo', created_at: '2026-09-01T08:00:00.000Z' },
+      { id: 'd2', name: '示例卡片 B', owner: '李四', status: 'todo', created_at: '2026-09-15T09:30:00.000Z' },
+      { id: 'd3', name: '示例卡片 C', owner: '王五', status: 'doing', created_at: '2026-10-02T14:20:00.000Z' },
+      { id: 'd4', name: '示例卡片 D', owner: '赵六', status: 'done', created_at: '2026-10-10T10:00:00.000Z' },
+      { id: 'd5', name: '示例卡片 E', owner: '张三', status: 'doing', created_at: '2026-10-18T16:45:00.000Z' },
+    ];
+
+    /* ===== 状态 ===== */
+    const rowsById = new Map(); // id -> 记录（status 以本地为准，PATCH 成功后同步）
+
+    /* ===== DOM / 错误条 ===== */
+    const $ = (id) => document.getElementById(id);
+    const error = mountErrorBar();
+    const board = $('board');
+    const colBodies = new Map(); // 列 key -> { body, count, empty }
+
+    /* ===== 搭建列 ===== */
+    function buildColumns() {
+      for (const col of COLUMNS) {
+        const section = document.createElement('section');
+        section.style.cssText = 'flex:1 0 260px;min-width:260px;display:flex;flex-direction:column;'
+          + 'border:1px solid var(--border);border-radius:var(--radius);background:var(--card);';
+        const head = document.createElement('div');
+        head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;'
+          + 'padding:10px 12px;border-bottom:1px solid var(--border);';
+        const label = document.createElement('span');
+        label.textContent = t(col.labelKey, col.label);
+        label.style.cssText = 'font-size:13px;font-weight:600;';
+        const count = document.createElement('span');
+        count.className = 'badge';
+        count.textContent = '0';
+        head.append(label, count);
+        const body = document.createElement('div');
+        body.dataset.col = col.key;
+        body.style.cssText = 'padding:10px;display:flex;flex-direction:column;gap:10px;min-height:160px;'
+          + 'max-height:calc(100vh - 240px);overflow-y:auto;';
+        const empty = document.createElement('div');
+        empty.style.cssText = 'font-size:12px;color:var(--muted-foreground);text-align:center;padding:14px 0;';
+        empty.textContent = t('tpl.board.dropHere', '拖卡片到这里');
+        body.appendChild(empty);
+        section.append(head, body);
+        board.appendChild(section);
+        colBodies.set(col.key, { body, count, empty });
+        // sortable：同组跨列拖拽；落组回调里做 PATCH
+        new Sortable(body, {
+          group: 'board',
+          animation: 150,
+          ghostClass: 'sortable-ghost',
+          onEnd: (evt) => onDrop(evt),
+        });
+      }
+    }
+
+    /* ===== 卡片渲染（mustache 一次注入整列） ===== */
+    function cardView(r) {
+      return {
+        id: r.id,
+        title: (r[CARD.title] != null && r[CARD.title] !== '') ? String(r[CARD.title]) : t('tpl.board.untitled', '（未命名）'),
+        subtitle: (r[CARD.subtitle] != null && r[CARD.subtitle] !== '') ? String(r[CARD.subtitle]) : '—',
+        meta: formatDate(r[CARD.meta]),
+        statusLabel: colLabel(r[STATUS_FIELD]),
+      };
+    }
+
+    function colLabel(key) {
+      const c = COLUMNS.find((x) => x.key === key);
+      return (c && t(c.labelKey, c.label)) || key || '—';
+    }
+
+    function renderColumn(colKey) {
+      const refs = colBodies.get(colKey);
+      const cards = [];
+      for (const r of rowsById.values()) {
+        if (r[STATUS_FIELD] === colKey) cards.push(cardView(r));
+      }
+      // 先清空再注入（{{var}} 转义后 innerHTML，注入安全）
+      refs.body.textContent = '';
+      if (cards.length === 0) {
+        refs.body.appendChild(refs.empty);
+      } else {
+        refs.empty.remove();
+        const frag = document.createElement('div');
+        frag.innerHTML = Mustache.render($('tplCard').textContent, { cards });
+        while (frag.firstChild) refs.body.appendChild(frag.firstChild);
+      }
+      afterInject(refs.body); // 注入后重建 basecoat 交互组件
+      refs.count.textContent = String(cards.length);
+    }
+
+    function renderAll() {
+      for (const col of COLUMNS) renderColumn(col.key);
+    }
+
+    /* ===== 拖拽落组：乐观更新 + PATCH + 失败回滚 ===== */
+    function onDrop(evt) {
+      const id = evt.item.dataset.id;
+      const toCol = evt.to.dataset.col;
+      const row = rowsById.get(id);
+      if (!row || !toCol || row[STATUS_FIELD] === toCol) return; // 同列移动不发请求
+
+      const fromCol = row[STATUS_FIELD];
+      row[STATUS_FIELD] = toCol;      // 乐观更新
+      renderColumn(fromCol);
+      renderColumn(toCol);
+
+      if (USE_DEMO) {
+        $('loadStatus').textContent = t('tpl.board.demoSaved', '演示模式：已模拟保存');
+        return;
+      }
+      patchStatus(row.id, toCol)
+        .then(() => { $('loadStatus').textContent = t('tpl.board.saved', '已保存'); })
+        .catch((err) => {
+          // 失败回滚：记录与卡片移回原列，并提示
+          row[STATUS_FIELD] = fromCol;
+          renderColumn(fromCol);
+          renderColumn(toCol);
+          error.show(t('tpl.board.saveFailed', '「{card}」状态保存失败：{msg}，已回滚到原列。')
+            .replace('{card}', () => row[CARD.title] || t('tpl.board.card', '卡片'))
+            .replace('{msg}', () => (err && err.message ? err.message : t('tpl.board.unknownError', '未知错误'))));
+        });
+    }
+
+    async function patchStatus(id, status) {
+      let res;
+      try {
+        res = await fetch('/api/' + TABLE + '/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [STATUS_FIELD]: status }),
+        });
+      } catch {
+        throw new Error(t('tpl.board.networkError', '网络请求失败'));
+      }
+      if (!res.ok) {
+        let detail = 'HTTP ' + res.status;
+        try { const j = await res.json(); if (j && j.error) detail = j.error; } catch { /* 忽略 */ }
+        throw new Error(detail);
+      }
+      await res.json().catch(() => null);
+    }
+
+    /* ===== 加载 ===== */
+    async function loadRows() {
+      if (USE_DEMO) return demo_rows;
+      const rows = await fetchAll(TABLE, 'sort=-created_at');
+      return rows.filter((r) => r && r.id && !r.deleted_at); // 客户端过滤软删除
+    }
+
+    /* ===== 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） ===== */
+    function applyStaticI18n() {
+      document.title = t('tpl.board.title', '看板模板');
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim());
+      }
+    }
+
+    /* ===== 启动：locale 就绪后再渲染 UI 文案 ===== */
+    (async () => {
+      await ensureI18n();
+      applyStaticI18n();
+      buildColumns();
+      try {
+        const rows = await loadRows();
+        for (const r of rows) rowsById.set(r.id, r);
+        renderAll();
+        $('loadStatus').textContent = USE_DEMO
+          ? t('tpl.board.demoDataLoaded', '内置演示数据（适配后走 /api）')
+          : t('tpl.board.loadedCount', '已加载 {count} 条').replace('{count}', rows.length);
+        mountLayout({ active: null, title: t('tpl.board.title', '看板模板') });
+      } catch (err) {
+        $('loadStatus').textContent = t('tpl.board.loadFailed', '加载失败');
+        error.show(TABLE + ' ' + t('tpl.board.loadFailedPrefix', '看板数据加载失败：') + err.message);
+        mountLayout({ active: null, title: t('tpl.board.title', '看板模板') });
+      }
+    })();
+  </script>
+</body>
+</html>

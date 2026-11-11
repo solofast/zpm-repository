@@ -1,0 +1,1015 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CRUD 管理模板</title>
+  <script>(() => { try {
+    const stored = localStorage.getItem("themeMode");
+    if (stored ? stored === "dark" : matchMedia("(prefers-color-scheme: dark)").matches)
+      document.documentElement.classList.add("dark");
+  } catch (_) {} })();</script>
+  <link rel="stylesheet" href="/vendor/basecoat/basecoat-lyra.cdn.min.css">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/layout/layout.css">
+  <script src="/vendor/basecoat/all.min.js" defer></script>
+  <script src="/vendor/dayjs/dayjs.min.js"></script>
+  <script src="/vendor/xlsx/xlsx.full.min.js"></script>
+  <style>
+    /* ===== 页面自有样式（pg- 前缀；颜色一律 var(--token)，禁 hsl() 包装） ===== */
+
+    /* 满高弹性布局（table.md 契约）：#pageContent 由外壳移入 .lx-content（唯一滚动容器），
+       页面接管为满高列；表格卡 flex:1 吸收剩余空间，表格在卡内滚动，分页常驻卡底 */
+    #pageContent { height: 100%; }
+    .pg-main { height: 100%; display: flex; flex-direction: column; padding: 20px 24px; }
+    /* .pg-main 提特异性：压过外壳 .lx-content h1 的排版外距（16px 24px 0），标题与表格左缘对齐 */
+    .pg-main .pg-h1 { margin: 0; font-size: 18px; font-weight: 700; line-height: 1.3; }
+
+    /* 工具条 + 筛选区固定高 */
+    .pg-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .pg-toolbar .pg-spacer { flex: 1; }
+    .pg-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+
+    /* ---- 表格卡（双表模式，table-scroll.md）---- */
+    /* PM 约定：表格卡为纯表壳，覆盖全局 .card 内距（card.md 的 18px 26px 让位给表体） */
+    .pg-table-card { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    /* 横滚壳：单轴 overflow 升格陷阱——overflow-y 必须显式 hidden（table-scroll.md 陷阱②） */
+    .pg-hscroll { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-x: auto; overflow-y: hidden; }
+    /* 静态表头带：不在任何滚动容器内，物理钉死 */
+    .pg-head-row { flex: none; }
+    /* 唯一纵向滚动者（宽度由 syncTableWidth() 显式同步，规避经典滚动条占宽导致的表头错位） */
+    .pg-vscroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+
+    .pg-head-table, .pg-body-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
+    /* 表头带分隔线：separate 模式下 vendor 的 thead tr 边框不渲染，挂 th */
+    .pg-head-table thead th { border-bottom: 1px solid var(--border); }
+    /* 12px 字阶（table.md §4）：表头 11px/500/muted；vendor 自带 th 的 nowrap/middle 勿覆盖 */
+    .pg-head-table th { font-size: 11px; font-weight: 500; color: var(--muted-foreground); }
+    .pg-body-table { font-size: 12px; }
+    .pg-body-table td { padding-block: 10px; line-height: 1.5; }
+    /* fixed 布局 + vendor nowrap：单元格截断防溢出串列 */
+    .pg-body-table td { overflow: hidden; text-overflow: ellipsis; }
+    /* 行线挂 td（separate 模式 tr 边框不渲染）；末行无线复刻 vendor 观感 */
+    .pg-body-table td { border-bottom: 1px solid var(--border); }
+    .pg-body-table tbody tr:last-child td { border-bottom: none; }
+    /* 数值/时间列：右对齐 + 等宽数字（th 对齐由 PG_COLUMNS 驱动，成对同向） */
+    .pg-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pg-cell-muted { color: var(--muted-foreground); }
+    /* 操作列：不换行，按钮间距 6px（table.md §8） */
+    .pg-actions { white-space: nowrap; }
+    .pg-actions .btn + .btn { margin-left: 6px; }
+    /* PM 约定：删除按钮 = outline 变体上 destructive 前景色（table.md §8 .btn-danger） */
+    .btn-danger { color: var(--destructive); }
+
+    /* ---- 富分页（pagination.md：basecoat 无独立分页 CSS，btn 拼装）----
+       卡片底脚形态：信息居左、页码居右，border-top 与表体分隔 */
+    .pg-pager {
+      flex: none;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 10px 20px;
+      border-top: 1px solid var(--border);
+    }
+    .pg-pager .pg-spacer { flex: 1; }
+    .pg-pager-info { font-size: 11px; color: var(--muted-foreground); }
+    .pg-pager-list { display: flex; align-items: center; gap: 4px; list-style: none; margin: 0; padding: 0; }
+    .pg-main .btn[data-size="icon-sm"] { font-size: 12px; }
+    .pg-pager-ellipsis { min-width: 24px; text-align: center; font-size: 11px; color: var(--muted-foreground); user-select: none; }
+
+    /* ---- combobox 筛选（combobox.md 样式约定）---- */
+    .pg-combo { width: 170px; flex: none; } /* 定宽：清除按钮显隐不引起跳动 */
+    .pg-combo .input-group { border: 1px solid var(--input); border-radius: var(--radius-md); }
+    .pg-combo .input-group input[role="combobox"] { border: none; } /* 边框归 group，内部不再画线 */
+    /* PM 约定：group 聚焦不变色（form-focus.md——layout.css 只中和了 input 本体，
+       basecoat 走 :focus-within 给 group 注 ring，必须连父级一起中和） */
+    .pg-combo .input-group:focus-within {
+      border-color: var(--input);
+      --tw-ring-shadow: 0 0 #0000;
+      --tw-ring-color: transparent;
+    }
+
+    /* ---- 编辑弹窗表单（crud.md §3）---- */
+    .pg-dialog { width: min(560px, 92vw); }
+    .pg-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
+    .pg-span2 { grid-column: span 2; }
+    /* 必填红星 */
+    .pg-req { color: var(--destructive); }
+    /* 字段级错误（toast.md 分工表：弹窗内校验/保存失败必须紧贴字段） */
+    .pg-field-error { margin: 4px 0 0; font-size: 11px; color: var(--destructive); }
+
+    /* ---- toast 三态语义色（toast.md canonical 块，逐字复制）----
+       容器从底部提到 header（56px）下方视口顶部居中 */
+    .toaster[data-align="center"] { top: 8px; bottom: auto; gap: 8px; max-height: 300px; overflow: hidden; }
+    .toast { border-left: 3px solid var(--border); }
+    .toast[data-category="success"] { border-left-color: oklch(0.696 0.17 162.48); }
+    .toast[data-category="success"] .toast-content > svg { color: oklch(0.696 0.17 162.48); }
+    .toast[data-category="warning"] { border-left-color: oklch(0.795 0.184 86.047); }
+    .toast[data-category="warning"] .toast-content > svg { color: oklch(0.795 0.184 86.047); }
+    .toast[data-category="error"] { border-left-color: var(--destructive); }
+    .toast[data-category="error"] .toast-content > svg { color: var(--destructive); }
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <main class="pg-main">
+      <!-- 工具条：标题 + spacer + 新增 + 导出（crud.md §2） -->
+      <div class="pg-toolbar">
+        <!-- 适配：标题文案（tpl.crud.heading；接入后可改自己的 locale key 与中文） -->
+        <h1 class="pg-h1" data-i18n="tpl.crud.heading">通用管理</h1>
+        <span class="pg-spacer"></span>
+        <button id="btnNew" type="button" class="btn" data-variant="primary" data-size="sm" data-i18n="tpl.crud.new">新增</button>
+        <button id="btnExport" type="button" class="btn" data-variant="outline" data-size="sm" data-i18n="tpl.crud.export">导出</button>
+      </div>
+
+      <!-- 筛选区：关键字（SEARCH_FIELD:like，250ms 防抖）+ 关联字段筛选（RELATION.field:eq，combobox）
+           适配：目标表无关联字段时，删除整个 #relCombo 块（宪法：禁止发明无数据来源的筛选项），
+           并把 JS 顶部 RELATION 置 null -->
+      <div class="pg-filters">
+        <input id="searchInput" name="kw" type="text" class="input" placeholder="搜索名称…"
+          autocomplete="off" style="flex:1;min-width:200px;max-width:340px;">
+        <div class="combobox pg-combo" id="relCombo">
+          <input type="hidden" name="rel_filter" value="">
+          <div class="input-group">
+            <input type="text" role="combobox" class="input" placeholder="全部" autocomplete="off">
+            <button type="button" data-clear aria-label="清除筛选">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>
+            </button>
+          </div>
+          <div data-popover aria-hidden="true">
+            <div role="listbox" aria-label="筛选选项"><!-- option 由关联数据动态 DOM API 创建（combobox.md：禁静态写死/innerHTML 拼业务数据） --></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 表格卡（双表模式：表头带物理钉死 + 内容区独立滚，table-scroll.md） -->
+      <div class="card pg-table-card">
+        <div class="pg-hscroll">
+          <div class="pg-head-row">
+            <table class="table pg-head-table">
+              <colgroup><!-- 由 buildTableHead() 按 PG_COLUMNS 生成（单一事实源，禁手写两份） --></colgroup>
+              <thead><tr><!-- 由 buildTableHead() 生成 --></tr></thead>
+            </table>
+          </div>
+          <div class="pg-vscroll">
+            <table class="table pg-body-table">
+              <colgroup><!-- 同上 --></colgroup>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 富分页：官方形态 nav>ul>li，信息居左、页码居右；prev/next 为静态 data-fixed li，
+             页码由 updatePager 只重建非固定 li（pagination.md） -->
+        <nav class="pg-pager" role="navigation" aria-label="表格分页">
+          <span id="pageInfo" class="pg-pager-info">—</span>
+          <span class="pg-spacer"></span>
+          <ul id="pagerList" class="pg-pager-list">
+            <li data-fixed>
+              <button id="btnPrev" type="button" class="btn" data-variant="ghost" data-size="sm">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span data-i18n="tpl.crud.prevPage">上一页</span>
+              </button>
+            </li>
+            <li data-fixed>
+              <button id="btnNext" type="button" class="btn" data-variant="ghost" data-size="sm">
+                <span data-i18n="tpl.crud.nextPage">下一页</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </main>
+  </div>
+
+  <!-- 新增/编辑共用 dialog（crud.md §3：官方 header/section/footer 标记 + showModal）。
+       表单字段由 JS 按 FORM_FIELDS 配置驱动生成（DOM API，textContent 天然转义），本标记只留骨架 -->
+  <dialog id="editDialog" class="dialog pg-dialog" aria-labelledby="editDlgTitle">
+    <div>
+      <header>
+        <h2 id="editDlgTitle" data-title data-i18n="tpl.crud.createTitle">新增记录</h2>
+      </header>
+      <section>
+        <form id="editForm" novalidate>
+          <div class="pg-form-grid" id="formGrid"><!-- 字段由 buildForm() 生成 --></div>
+          <!-- 保存失败表单内整体提示（toast.md 分工表：错误条会被 dialog 背板遮挡） -->
+          <p role="alert" class="pg-field-error" id="formError" style="margin-top:12px;" hidden></p>
+        </form>
+      </section>
+      <footer>
+        <button type="button" class="btn" data-variant="outline" id="btnCancelEdit" data-i18n="tpl.crud.cancel">取消</button>
+        <button type="submit" form="editForm" class="btn" data-variant="primary" id="btnSave" data-i18n="tpl.crud.save">保存</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- 删除确认 dialog（crud.md §4：destructive + 提交期间 disabled；软删 PATCH deleted_at） -->
+  <dialog id="deleteDialog" class="dialog" aria-labelledby="delDlgTitle">
+    <div style="width:min(400px,92vw);">
+      <header>
+        <h2 id="delDlgTitle" data-i18n="tpl.crud.deleteTitle">删除确认</h2>
+      </header>
+      <section>
+        <p id="delText" style="margin:0;font-size:13px;line-height:1.7;"></p>
+      </section>
+      <footer>
+        <button type="button" class="btn" data-variant="outline" id="btnCancelDel" data-i18n="tpl.crud.cancel">取消</button>
+        <button type="button" class="btn" data-variant="destructive" id="btnConfirmDel" data-i18n="tpl.crud.confirmDelete">确认删除</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- basecoat toaster：id+class 双契约（toast.md：缺 class 即无样式裸奔；禁 JS 动态创建） -->
+  <div id="toaster" class="toaster" data-align="center"></div>
+
+  <script type="module">
+    /* ============================================================
+     * CRUD 管理模板（templates/crud.html）——单实体增删改查，knowledge/rules/crud.md 模式
+     *
+     * 适配五步（跟着「适配」注释走）：
+     *   1) 下方 CONFIG 区：TABLE / SEARCH_FIELD / SORT / RELATION / PG_COLUMNS / FORM_FIELDS
+     *   2) USE_DEMO 改 false，删除 demo_rows / demo_users（正式页严禁保留假数据，宪法硬性规则 2）
+     *   3) locale：把 tpl.crud.* 前缀改成 page.<页面>.*（连同 pages/locales/ 两份文件）
+     *   4) 确认目标表在 zpm.config.yaml 的 sync.tables + write.tables 内，否则先加配置并 zpm sync
+     *   5) 删除本注释块
+     * 行为约定：删除=软删（PATCH deleted_at，zpm 契约无 DELETE 动词）；
+     *   新增=客户端 UUID + POST 前预检（服务端不自动生成主键，POST 为最终裁决）
+     * ============================================================ */
+    import { getJSON, fetchAll, mountErrorBar, formatDate, exportRowsToExcel, afterInject, i18nText } from '/app.js';
+    import { ensureI18n, t } from '/i18n.js';
+    import { mountLayout } from '/layout/layout.js';
+
+    /* ===== CONFIG（适配区） ===== */
+    const TABLE = 'demo_rows';        // 适配：目标表名
+    const USE_DEMO = true;            // 适配：接入真实表后改 false，并删除文件尾 demo_rows / demo_users
+    const SEARCH_FIELD = 'name';      // 适配：关键字 like 字段
+    const SORT = '-created_at';       // 适配：默认排序（- 倒序）
+    const PAGE_SIZE = 20;
+    // 适配：关联筛选 + 表格负责人列 + 表单 combo 字段共用；无关联字段时置 null 并删筛选区 #relCombo 标记
+    const RELATION = {
+      field: 'owner_id',              //   本表外键字段（where eq）
+      table: 'demo_users',            //   目标关联表
+      nameOf: (m) => m.name,          //   关联行 → 显示名
+    };
+    // 适配：列配置——表头/表体/导出三处同源驱动（field→取值；rel 关联列；num 数值右对齐；date 时间；muted 弱化）
+    const PG_COLUMNS = [
+      { field: 'name', labelKey: 'tpl.crud.colName', label: '名称', w: 220 },
+      { field: 'owner_id', labelKey: 'tpl.crud.colOwner', label: '负责人', w: 140, rel: true },
+      { field: 'quantity', labelKey: 'tpl.crud.colQuantity', label: '数量', w: 110, align: 'right', num: true },
+      { field: 'created_at', labelKey: 'tpl.crud.colCreatedAt', label: '创建时间', w: 150, align: 'right', num: true, muted: true, date: true },
+      { labelKey: 'tpl.crud.colActions', label: '操作', w: 140, actions: true },
+    ];
+    // 适配：弹窗表单字段（span2 整行；required 必填；combo 取 RELATION）
+    const FORM_FIELDS = [
+      { name: 'name', labelKey: 'tpl.crud.fName', label: '名称', type: 'text', required: true, span2: true },
+      { name: 'owner_id', labelKey: 'tpl.crud.fOwner', label: '负责人', type: 'combo' },
+      { name: 'quantity', labelKey: 'tpl.crud.fQuantity', label: '数量', type: 'number' },
+    ];
+    /* ===== CONFIG 结束 ===== */
+
+    /* ===== 状态 ===== */
+    const state = { kw: '', rel: '', page: 1, total: 0, rows: [] };
+    const relMap = new Map(); // 关联 id → 显示名
+    let relMembers = [];
+
+    /* ===== DOM ===== */
+    const $ = (id) => document.getElementById(id);
+    const qq = (sel) => document.querySelector(sel);
+    const error = mountErrorBar(); // 页面级加载失败：错误条（toast.md 分工表）
+
+    /* ===== 写请求封装（app.js 的 getJSON 仅支持 GET；POST/PATCH 在此补失败处理） ===== */
+    async function sendJSON(url, method, body) {
+      let res;
+      try {
+        res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        throw new Error(t('tpl.crud.networkError', '网络请求失败'));
+      }
+      if (!res.ok) {
+        let msg = 'HTTP ' + res.status;
+        try {
+          const j = await res.json();
+          if (j && typeof j.error === 'string') msg = j.error;
+        } catch { /* 非 JSON 错误体，保留 HTTP 状态码 */ }
+        throw new Error(msg);
+      }
+      try { return await res.json(); } catch { return null; }
+    }
+
+    /* ===== toast 封装（toast.md 标准封装：堆叠上限 3 条，关旧保新） ===== */
+    function showToast(category, title, description) {
+      const toaster = document.getElementById('toaster');
+      if (!toaster || typeof toaster.toast !== 'function') return;
+      const live = toaster.querySelectorAll('.toast:not([aria-hidden="true"])');
+      for (let i = 0; i + 3 <= live.length; i++) {
+        if (typeof live[i].close === 'function') live[i].close();
+      }
+      toaster.toast({ category, title, description });
+    }
+
+    /* ===== 视图模型（接口字符串默认过 i18nText，非 JSON 串无损） ===== */
+    function cellText(row, col) {
+      if (col.actions) return '';
+      if (col.rel) return relMap.get(row[RELATION.field]) || '—';
+      if (col.date) return formatDate(row[col.field], 'YYYY-MM-DD HH:mm');
+      const v = i18nText(row[col.field]);
+      if (v == null || v === '') return '—';
+      return col.num && typeof row[col.field] === 'number' ? v.toLocaleString('zh-CN') : v;
+    }
+
+    /* ===== 表头带：两张表 colgroup + 表头行由同一份 PG_COLUMNS 生成（禁手写两份） ===== */
+    const COLS_MIN = PG_COLUMNS.reduce((s, c) => s + c.w, 0);
+
+    function buildTableHead() {
+      for (const table of document.querySelectorAll('.pg-head-table, .pg-body-table')) {
+        const colgroup = table.querySelector('colgroup');
+        colgroup.textContent = '';
+        for (const c of PG_COLUMNS) {
+          const col = document.createElement('col');
+          col.style.width = c.w + 'px';
+          colgroup.appendChild(col);
+        }
+      }
+      const tr = qq('.pg-head-table thead tr');
+      tr.textContent = '';
+      for (const c of PG_COLUMNS) {
+        const th = document.createElement('th');
+        th.scope = 'col';
+        th.textContent = t(c.labelKey, c.label);
+        if (c.align === 'right') th.style.textAlign = 'right'; // 成对同向：td 由 .pg-num 对齐
+        tr.appendChild(th);
+      }
+      syncTableWidth();
+    }
+
+    /* 两表同宽：目标宽 = 容器宽与列宽和取大（窄屏由 .pg-hscroll 承担横滚）。
+       经典滚动条占宽时表格缩到 vscroll 内容盒宽、差值转表头带右内距——
+       保证逐列 rect 宽度相等（table-scroll.md 验证口径 4）、hscroll 无横向溢出、末列不裁剪 */
+    function syncTableWidth() {
+      const hscroll = qq('.pg-hscroll');
+      const vscroll = qq('.pg-vscroll');
+      const headRow = qq('.pg-head-row');
+      if (!hscroll || !vscroll || !headRow) return;
+      const target = Math.max(hscroll.clientWidth, COLS_MIN);
+      vscroll.style.width = target + 'px';
+      const inner = vscroll.clientWidth; // 经典滚动条环境 < target，overlay 环境等于 target
+      const tableW = inner >= COLS_MIN ? Math.min(inner, target) : COLS_MIN;
+      headRow.style.paddingRight = Math.max(0, target - tableW) + 'px';
+      for (const tb of document.querySelectorAll('.pg-head-table, .pg-body-table')) tb.style.width = tableW + 'px';
+    }
+    window.addEventListener('resize', syncTableWidth);
+
+    /* ===== 骨架行（table.md §6：加载态用骨架，5 行 × 列数） ===== */
+    function renderSkeleton() {
+      const tbody = $('tbody');
+      tbody.textContent = '';
+      for (let r = 0; r < 5; r++) {
+        const tr = document.createElement('tr');
+        tr.setAttribute('aria-hidden', 'true');
+        for (const c of PG_COLUMNS) {
+          const td = document.createElement('td');
+          const bar = document.createElement('div');
+          bar.className = 'skeleton';
+          bar.style.cssText = 'height:12px;width:' + (55 + ((r * 13 + c.w) % 40)) + '%;';
+          td.appendChild(bar);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+    }
+
+    /* 占位行：空态 muted / 失败 destructive（失败同时错误条常驻） */
+    function placeholderRow(text, danger) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = PG_COLUMNS.length;
+      td.textContent = text;
+      td.style.cssText = 'padding:28px 12px;text-align:center;color:var(--' + (danger ? 'destructive' : 'muted-foreground') + ');';
+      tr.appendChild(td);
+      return tr;
+    }
+
+    /* ===== 取数：USE_DEMO 内存仿真 / 真实 API（where like+eq / sort / page / pageSize 同构） ===== */
+    function buildQuery() {
+      const p = new URLSearchParams();
+      if (state.kw) p.append('where', SEARCH_FIELD + ':like:' + state.kw);
+      if (state.rel && RELATION) p.append('where', RELATION.field + ':eq:' + state.rel);
+      p.append('sort', SORT);
+      p.append('page', String(state.page));
+      p.append('pageSize', String(PAGE_SIZE));
+      return '/api/' + TABLE + '?' + p.toString();
+    }
+
+    // 软删表防御性过滤（crud.md §4）：无 id 的行不可 PATCH，一律不进列表
+    const aliveOnly = (rows) => rows.filter((r) => r && r.id != null && !r.deleted_at);
+
+    // demo 仿真：与真实 API 同构的 { data, total }（软删过滤 + where like/eq、sort、分页客户端模拟）
+    function demoQuery() {
+      const kw = state.kw.toLowerCase();
+      let rows = demo_rows.filter((r) =>
+        (!r.deleted_at) &&
+        (!state.kw || typeof r[SEARCH_FIELD] === 'string' && r[SEARCH_FIELD].toLowerCase().includes(kw)) &&
+        (!state.rel || !RELATION || r[RELATION.field] === state.rel));
+      const desc = SORT.startsWith('-');
+      const field = SORT.replace(/^-/, '');
+      rows = rows.slice().sort((a, b) => {
+        const va = a[field], vb = b[field];
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        return (va > vb ? 1 : va < vb ? -1 : 0) * (desc ? -1 : 1);
+      });
+      const total = rows.length;
+      return { data: rows.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE), total };
+    }
+
+    async function loadPage() {
+      if (USE_DEMO) {
+        const { data, total } = demoQuery();
+        state.rows = aliveOnly(data);
+        state.total = total;
+        return;
+      }
+      const json = await getJSON(buildQuery());
+      const rows = aliveOnly(Array.isArray(json.data) ? json.data : []);
+      state.rows = rows;
+      state.total = typeof json.total === 'number' ? json.total : rows.length;
+    }
+
+    /* ===== 渲染（骨架 → 数据/空/失败 三态；行单元格 DOM API 生成，textContent 天然转义） ===== */
+    async function render() {
+      renderSkeleton();
+      $('pageInfo').textContent = t('tpl.crud.loading', '加载中…');
+      try {
+        await loadPage();
+      } catch (err) {
+        const tbody = $('tbody');
+        tbody.textContent = '';
+        tbody.appendChild(placeholderRow(t('tpl.crud.loadFailed', '加载失败'), true));
+        $('pageInfo').textContent = '';
+        error.show(TABLE + ' ' + t('tpl.crud.loadFailedPrefix', '列表加载失败：') + (err && err.message ? err.message : t('tpl.crud.unknownError', '未知错误')));
+        updatePager();
+        return;
+      }
+      const tbody = $('tbody');
+      tbody.textContent = '';
+      if (state.rows.length === 0) {
+        tbody.appendChild(placeholderRow(t('tpl.crud.empty', '暂无数据'), false));
+      } else {
+        for (const row of state.rows) {
+          const tr = document.createElement('tr');
+          tr.dataset.id = row.id;
+          for (const col of PG_COLUMNS) {
+            const td = document.createElement('td');
+            if (col.actions) {
+              td.className = 'pg-actions';
+              const edit = document.createElement('button');
+              edit.type = 'button';
+              edit.className = 'btn';
+              edit.dataset.variant = 'outline';
+              edit.dataset.size = 'sm';
+              edit.dataset.edit = row.id;
+              edit.textContent = t('tpl.crud.edit', '编辑');
+              const del = document.createElement('button');
+              del.type = 'button';
+              del.className = 'btn btn-danger';
+              del.dataset.variant = 'outline';
+              del.dataset.size = 'sm';
+              del.dataset.del = row.id;
+              del.textContent = t('tpl.crud.del', '删除');
+              td.append(edit, del);
+            } else {
+              if (col.align === 'right') td.classList.add('pg-num');
+              if (col.muted) td.classList.add('pg-cell-muted');
+              td.textContent = cellText(row, col);
+            }
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        }
+        afterInject(tbody); // 动态注入后重建 basecoat 交互组件
+      }
+      updatePager();
+    }
+
+    /* ===== 富分页（pagination.md：页码省略算法 + DOM API 只重建页码 li + 委托） ===== */
+    function totalPagesOf() {
+      return Math.max(1, Math.ceil(state.total / PAGE_SIZE));
+    }
+
+    function pagerPages(cur, total) {
+      if (total <= 5) return Array.from({ length: total }, (_, i) => i + 1);
+      const win = [...new Set([1, total, cur - 1, cur, cur + 1].filter((p) => p >= 1 && p <= total))]
+        .sort((a, b) => a - b);
+      const pages = [];
+      let prev = 0;
+      for (const p of win) {
+        if (prev && p - prev > 1) pages.push('…');
+        pages.push(p);
+        prev = p;
+      }
+      return pages;
+    }
+
+    function updatePager() {
+      const totalPages = totalPagesOf();
+      $('pageInfo').textContent = t('tpl.crud.pageInfo', '共 {count} 条 · 第 {page} / {total} 页')
+        .replace('{count}', state.total).replace('{page}', state.page).replace('{total}', totalPages);
+      $('btnPrev').disabled = state.page <= 1;
+      $('btnNext').disabled = state.page >= totalPages;
+      // 只重建非固定 li（prev/next 是静态 data-fixed 节点，不动）；当前页 aria-current + outline 不可点
+      const list = $('pagerList');
+      for (const li of [...list.children]) {
+        if (!li.hasAttribute('data-fixed')) li.remove();
+      }
+      const before = list.lastElementChild;
+      for (const p of pagerPages(state.page, totalPages)) {
+        const li = document.createElement('li');
+        if (p === '…') {
+          li.className = 'pg-pager-ellipsis';
+          li.setAttribute('aria-hidden', 'true');
+          li.textContent = '…';
+        } else {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'btn';
+          b.dataset.size = 'icon-sm'; // 与 prev/next sm 同排等高
+          if (p === state.page) {
+            b.dataset.variant = 'outline';
+            b.setAttribute('aria-current', 'page');
+            b.disabled = true; // 当前页不可点、视觉突出
+          } else {
+            b.dataset.variant = 'ghost';
+            b.dataset.page = String(p);
+            b.setAttribute('aria-label', t('tpl.crud.pageAria', '第 {page} 页').replace('{page}', p));
+          }
+          b.textContent = String(p);
+          li.appendChild(b);
+        }
+        list.insertBefore(li, before);
+      }
+      afterInject(list); // 重建后重建 basecoat 组件
+      syncTableWidth();  // 数据行数变化会改变纵向滚动条有无——每次渲染后重新同步两表宽度
+    }
+
+    $('btnPrev').addEventListener('click', () => { if (state.page > 1) { state.page--; render(); } });
+    $('btnNext').addEventListener('click', () => { if (state.page < totalPagesOf()) { state.page++; render(); } });
+
+    $('pagerList').addEventListener('click', (e) => {
+      // 页码按钮事件委托：updatePager 重建后无需逐个绑事件（当前页 disabled 不可点）
+      const b = e.target.closest('button[data-page]');
+      if (!b || b.disabled) return;
+      const p = Number(b.dataset.page);
+      if (p >= 1 && p <= totalPagesOf() && p !== state.page) { state.page = p; render(); }
+    });
+
+    /* ===== 关联数据（RELATION → 筛选 combobox options + 表格/表单映射；demo 模式内存模拟） ===== */
+    function relName(m) { return RELATION.nameOf(m); }
+
+    // 业务 option 用 DOM API 动态创建（combobox.md：禁静态写死/innerHTML 拼业务数据）；
+    // 首个空值 option（value=""）与 data-clear 等效，表达「全部/未分配」选填语义
+    function fillComboOptions(listEl, emptyLabel) {
+      listEl.textContent = '';
+      listEl.dataset.empty = t('tpl.crud.comboNoMatch', '无匹配项');
+      const emptyOpt = document.createElement('div');
+      emptyOpt.setAttribute('role', 'option');
+      emptyOpt.dataset.value = '';
+      emptyOpt.dataset.label = emptyLabel;
+      emptyOpt.textContent = emptyLabel;
+      const sep = document.createElement('div');
+      sep.setAttribute('role', 'separator');
+      const frag = document.createDocumentFragment();
+      for (const m of relMembers) {
+        const opt = document.createElement('div');
+        opt.setAttribute('role', 'option');
+        opt.dataset.value = m.id;
+        opt.dataset.label = relName(m);
+        opt.textContent = relName(m);
+        frag.appendChild(opt);
+      }
+      listEl.append(emptyOpt, sep, frag);
+    }
+
+    function refreshCombo(rootEl) {
+      // 动态创建 options 后：已初始化则 refresh()，否则 initAll 兜底（combobox.md）
+      if (typeof rootEl.refresh === 'function') rootEl.refresh();
+      else if (window.basecoat?.initAll) window.basecoat.initAll();
+    }
+
+    async function loadRelation() {
+      if (!RELATION) return;
+      relMembers = aliveOnly(USE_DEMO ? demo_users : await fetchAll(RELATION.table));
+      for (const m of relMembers) relMap.set(m.id, relName(m));
+      fillComboOptions(qq('#relCombo [role="listbox"]'), t('tpl.crud.relAll', '全部'));
+      refreshCombo($('relCombo'));
+      // 弹窗 combo（buildForm 已生成）：填「未分配」空值 option + 重新收集 options（实例初始化时 listbox 还空）
+      for (const f of FORM_FIELDS) {
+        if (f.type !== 'combo') continue;
+        const ref = fieldRefs.get(f.name);
+        if (ref && ref.root) {
+          fillComboOptions(ref.root.querySelector('[role="listbox"]'), t('tpl.crud.relUnassigned', '未分配'));
+          refreshCombo(ref.root);
+        }
+      }
+    }
+
+    // 值同步关键坑（combobox.md）：给 hidden input 赋值不触发任何事件——
+    // 捕获态 click/keydown + requestAnimationFrame 读 hidden 值与 state 比对，变了才重查
+    function bindComboSync(rootEl) {
+      const hidden = rootEl.querySelector(':scope > input[type=hidden]');
+      const read = () => {
+        requestAnimationFrame(() => {
+          if (hidden.value !== state.rel) {
+            state.rel = hidden.value;
+            state.page = 1; // 改筛选回第 1 页
+            render();
+          }
+        });
+      };
+      rootEl.addEventListener('click', read, true);
+      rootEl.addEventListener('keydown', read, true);
+    }
+    if (RELATION) bindComboSync($('relCombo'));
+
+    /* ===== 新增/编辑共用 dialog：表单按 FORM_FIELDS 配置驱动生成（crud.md §3） ===== */
+    let editingId = null; // null = 新增态；编辑态主键不可改（不进表单，仅内存持有）
+    const fieldRefs = new Map(); // field.name → { root, input, hidden?, err }
+
+    function buildForm() {
+      const grid = $('formGrid');
+      grid.textContent = '';
+      for (const f of FORM_FIELDS) {
+        const wrap = document.createElement('div');
+        wrap.className = 'field' + (f.span2 ? ' pg-span2' : '');
+        const label = document.createElement('label');
+        label.htmlFor = 'f-' + f.name;
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = t(f.labelKey, f.label);
+        label.appendChild(labelSpan);
+        if (f.required) {
+          const star = document.createElement('span');
+          star.className = 'pg-req';
+          star.setAttribute('aria-hidden', 'true');
+          star.textContent = ' *';
+          label.appendChild(star);
+        }
+        wrap.appendChild(label);
+
+        let input, hidden = null, root = null;
+        if (f.type === 'combo') {
+          // basecoat combobox 标记（combobox.md）：hidden 载体 + input-group + popover/listbox
+          root = document.createElement('div');
+          root.className = 'combobox pg-combo-dialog';
+          root.style.width = '100%';
+          hidden = document.createElement('input');
+          hidden.type = 'hidden';
+          hidden.name = f.name;
+          hidden.value = '';
+          const group = document.createElement('div');
+          group.className = 'input-group';
+          input = document.createElement('input');
+          input.type = 'text';
+          input.setAttribute('role', 'combobox');
+          input.className = 'input';
+          input.autocomplete = 'off';
+          const clear = document.createElement('button');
+          clear.type = 'button';
+          clear.setAttribute('data-clear', '');
+          clear.setAttribute('aria-label', t('tpl.crud.clearRel', '清除'));
+          clear.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
+          group.append(input, clear);
+          const popover = document.createElement('div');
+          popover.setAttribute('data-popover', '');
+          popover.setAttribute('aria-hidden', 'true');
+          const listbox = document.createElement('div');
+          listbox.setAttribute('role', 'listbox');
+          popover.appendChild(listbox);
+          root.append(hidden, group, popover);
+          wrap.appendChild(root);
+        } else {
+          input = document.createElement('input');
+          input.type = f.type === 'number' ? 'number' : 'text';
+          if (f.type === 'number') { input.min = '0'; input.step = 'any'; }
+          input.className = 'input';
+          input.autocomplete = 'off';
+          wrap.appendChild(input);
+        }
+        input.id = 'f-' + f.name;
+        const err = document.createElement('p');
+        err.setAttribute('role', 'alert');
+        err.className = 'pg-field-error';
+        err.hidden = true;
+        wrap.appendChild(err);
+        grid.appendChild(wrap);
+        fieldRefs.set(f.name, { root, input, hidden, err, config: f });
+      }
+      afterInject(grid); // 动态注入 combobox 后重建 basecoat 组件
+    }
+
+    function setFieldError(f, msg) {
+      const ref = fieldRefs.get(f.name);
+      if (!ref) return;
+      if (msg) { ref.err.textContent = msg; ref.err.hidden = false; }
+      else { ref.err.textContent = ''; ref.err.hidden = true; }
+    }
+
+    function clearFormErrors() {
+      for (const f of FORM_FIELDS) setFieldError(f, null);
+      setFieldError({ name: '__form__' }, null);
+      $('formError').hidden = true;
+      $('formError').textContent = '';
+    }
+
+    function setComboValue(f, id) {
+      const ref = fieldRefs.get(f.name);
+      if (!ref) return;
+      // 回填：优先 vendor 内建 setValue（同时回填 hidden 与显示文本）；
+      // 动态创建的实例可能未挂 setValue——回退手动回填 hidden + 显示文本（relMap 取名）
+      if (ref.root && typeof ref.root.setValue === 'function') {
+        ref.root.setValue(id || '');
+      } else if (ref.hidden) {
+        ref.hidden.value = id || '';
+        ref.input.value = id ? (relMap.get(id) || '') : '';
+      } else {
+        ref.input.value = id || '';
+      }
+    }
+
+    function openCreate() {
+      editingId = null;
+      clearFormErrors();
+      $('editForm').reset();
+      for (const f of FORM_FIELDS) setComboValue(f, '');
+      $('editDlgTitle').textContent = t('tpl.crud.createTitle', '新增记录');
+      $('editDialog').showModal();
+      const first = fieldRefs.get(FORM_FIELDS[0].name);
+      if (first) first.input.focus(); // 打开时聚焦首字段
+    }
+
+    function openEdit(id) {
+      const row = state.rows.find((r) => String(r.id) === String(id));
+      if (!row) return;
+      editingId = row.id;
+      clearFormErrors();
+      for (const f of FORM_FIELDS) {
+        const ref = fieldRefs.get(f.name);
+        if (f.type === 'combo') setComboValue(f, row[f.name] || '');
+        else ref.input.value = row[f.name] ?? ''; // 预填原始值（不经 i18nText，无损写回）
+      }
+      $('editDlgTitle').textContent = t('tpl.crud.editTitle', '编辑记录');
+      $('editDialog').showModal();
+      const first = fieldRefs.get(FORM_FIELDS[0].name);
+      if (first) first.input.focus();
+    }
+
+    $('btnNew').addEventListener('click', openCreate);
+    $('btnCancelEdit').addEventListener('click', () => $('editDialog').close());
+
+    /* 提交：新增走「客户端 UUID + 预检 + POST」，编辑走 PATCH（主键不可改，id 不进表单）；
+       demo 模式在内存数组完成同等闭环 */
+    function collectPayload() {
+      const payload = {};
+      for (const f of FORM_FIELDS) {
+        const ref = fieldRefs.get(f.name);
+        if (f.type === 'combo') payload[f.name] = (ref.hidden ? ref.hidden.value : ref.input.value) || null;
+        else if (f.type === 'number') payload[f.name] = ref.input.value.trim() === '' ? null : Number(ref.input.value);
+        else payload[f.name] = ref.input.value.trim() || null;
+      }
+      return payload;
+    }
+
+    function validate(payload) {
+      let firstBad = null;
+      for (const f of FORM_FIELDS) {
+        const v = payload[f.name];
+        if (f.required && (v == null || v === '')) {
+          setFieldError(f, t('tpl.crud.errRequired', '{field}不能为空').replace('{field}', t(f.labelKey, f.label)));
+          if (!firstBad) firstBad = fieldRefs.get(f.name).input;
+        } else if (f.type === 'number' && v != null && (!isFinite(v))) {
+          setFieldError(f, t('tpl.crud.errNumber', '{field}需为数字').replace('{field}', t(f.labelKey, f.label)));
+          if (!firstBad) firstBad = fieldRefs.get(f.name).input;
+        } else {
+          setFieldError(f, null);
+        }
+      }
+      return firstBad;
+    }
+
+    // 服务端不自动生成主键（实测 POST 无 id 会落 null 主键行）：POST 前预检
+    // （crud.md §5：200=已存在报错，404=放行；POST 为最终裁决）
+    async function preCheckId(id) {
+      try {
+        await getJSON('/api/' + TABLE + '/' + encodeURIComponent(id));
+        return t('tpl.crud.idExists', '主键冲突，请重试');
+      } catch {
+        return null;
+      }
+    }
+
+    $('editForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearFormErrors();
+      const payload = collectPayload();
+      const firstBad = validate(payload);
+      if (firstBad) { firstBad.focus(); return; } // 校验失败聚焦首个错误字段
+
+      const btnSave = $('btnSave');
+      btnSave.disabled = true; // 提交期间防重复
+      try {
+        if (USE_DEMO) {
+          if (editingId == null) {
+            payload.id = 'demo-' + Date.now();
+            payload.created_at = new Date().toISOString();
+            demo_rows.unshift(payload);
+          } else {
+            payload.updated_at = new Date().toISOString();
+            const i = demo_rows.findIndex((r) => r.id === editingId);
+            if (i >= 0) demo_rows[i] = { ...demo_rows[i], ...payload };
+          }
+          $('editDialog').close();
+          showToast('success', t(editingId == null ? 'tpl.crud.created' : 'tpl.crud.updated', editingId == null ? '已创建' : '已保存'), payload.name);
+        } else if (editingId == null) {
+          payload.id = crypto.randomUUID();
+          // 实测：服务端 POST 不填 created_at/updated_at（保持 null，列表排序失真），由前端补齐
+          payload.created_at = new Date().toISOString();
+          payload.updated_at = payload.created_at;
+          const conflict = await preCheckId(payload.id);
+          if (conflict) throw new Error(conflict);
+          await sendJSON('/api/' + TABLE, 'POST', payload);
+          $('editDialog').close();
+          showToast('success', t('tpl.crud.created', '已创建'), payload.name);
+        } else {
+          payload.updated_at = new Date().toISOString(); // 实测：服务端 PATCH 同样不自动维护 updated_at
+          await sendJSON('/api/' + TABLE + '/' + encodeURIComponent(editingId), 'PATCH', payload);
+          $('editDialog').close();
+          showToast('success', t('tpl.crud.updated', '已保存'), payload.name);
+        }
+        render(); // 成功才关弹窗 + success toast + 刷新列表
+      } catch (err) {
+        // 保存失败走表单内提示（toast/错误条会被 dialog 背板遮挡，toast.md 分工表）
+        $('formError').textContent = t('tpl.crud.saveFailedPrefix', '保存失败：') + (err && err.message ? err.message : t('tpl.crud.unknownError', '未知错误'));
+        $('formError').hidden = false;
+      } finally {
+        btnSave.disabled = false;
+      }
+    });
+
+    /* ===== 删除（软删：PATCH deleted_at；独立确认 dialog + destructive，crud.md §4） ===== */
+    let deletingId = null;
+    let deletingName = '';
+
+    $('tbody').addEventListener('click', (e) => {
+      // 事件委托挂 tbody（data-edit / data-del 定位行，注入后无需逐个绑事件）
+      const editBtn = e.target.closest('[data-edit]');
+      if (editBtn) { openEdit(editBtn.dataset.edit); return; }
+      const delBtn = e.target.closest('[data-del]');
+      if (delBtn) {
+        const row = state.rows.find((r) => String(r.id) === String(delBtn.dataset.del));
+        if (!row) return;
+        deletingId = row.id;
+        deletingName = String(row[SEARCH_FIELD] ?? row.id);
+        $('delText').textContent = t('tpl.crud.deleteText', '确认删除「{name}」？该操作为软删除，可在数据库中恢复。').replace('{name}', deletingName);
+        $('deleteDialog').showModal();
+      }
+    });
+
+    $('btnCancelDel').addEventListener('click', () => $('deleteDialog').close());
+
+    $('btnConfirmDel').addEventListener('click', async () => {
+      const btn = $('btnConfirmDel');
+      btn.disabled = true; // 提交期间防重复
+      try {
+        if (USE_DEMO) {
+          const i = demo_rows.findIndex((r) => r.id === deletingId);
+          if (i >= 0) demo_rows[i].deleted_at = new Date().toISOString();
+        } else {
+          await sendJSON('/api/' + TABLE + '/' + encodeURIComponent(deletingId), 'PATCH', { deleted_at: new Date().toISOString() });
+        }
+        $('deleteDialog').close();
+        showToast('success', t('tpl.crud.deleted', '已删除'), deletingName);
+        // 删空当前页回退一页
+        if (state.rows.length <= 1 && state.page > 1) state.page--;
+        render();
+      } catch (err) {
+        // 失败：先关弹层再 error toast（toast 在 top layer 不受背板影响，toast.md 分工表）
+        $('deleteDialog').close();
+        showToast('error', t('tpl.crud.deleteFailed', '删除失败'), err && err.message ? err.message : t('tpl.crud.unknownError', '未知错误'));
+      } finally {
+        btn.disabled = false;
+        deletingId = null;
+        deletingName = '';
+      }
+    });
+
+    /* ===== 导出（table.md §9：当前筛选命中全量，非当前页；空结果 warning toast） ===== */
+    // 列配置单源：导出列 = PG_COLUMNS（actions 列除外），与表头/表体天然一致
+    async function exportCurrent() {
+      let rows;
+      const p = new URLSearchParams();
+      if (state.kw) p.append('where', SEARCH_FIELD + ':like:' + state.kw);
+      if (state.rel && RELATION) p.append('where', RELATION.field + ':eq:' + state.rel);
+      p.append('sort', SORT);
+      if (USE_DEMO) {
+        rows = aliveOnly(demo_rows);
+        const kw = state.kw.toLowerCase();
+        rows = rows.filter((r) =>
+          (!state.kw || typeof r[SEARCH_FIELD] === 'string' && r[SEARCH_FIELD].toLowerCase().includes(kw)) &&
+          (!state.rel || !RELATION || r[RELATION.field] === state.rel));
+      } else {
+        rows = aliveOnly(await fetchAll(TABLE, p.toString()));
+      }
+      if (rows.length === 0) {
+        showToast('warning', t('tpl.crud.exportEmpty', '当前筛选没有可导出的数据'));
+        return;
+      }
+      const out = rows.map((row) => {
+        const obj = {};
+        for (const col of PG_COLUMNS) {
+          if (col.actions) continue;
+          obj[t(col.labelKey, col.label)] = col.date
+            ? formatDate(row[col.field], 'YYYY-MM-DD HH:mm')
+            : (col.rel ? (relMap.get(row[RELATION.field]) || '') : (i18nText(row[col.field]) ?? ''));
+        }
+        return obj;
+      });
+      const file = exportRowsToExcel(out, TABLE, t('tpl.crud.exportFilePrefix', '数据导出'));
+      showToast('success', t('tpl.crud.exported', '已导出 {count} 条').replace('{count}', rows.length), file);
+    }
+
+    $('btnExport').addEventListener('click', () => {
+      exportCurrent().catch((err) => {
+        showToast('error', t('tpl.crud.exportFailedPrefix', '导出失败'), err && err.message ? err.message : t('tpl.crud.unknownError', '未知错误'));
+      });
+    });
+
+    /* ===== 搜索（250ms 防抖 + 回车立即查；改筛选回第 1 页） ===== */
+    let searchTimer = null;
+    $('searchInput').addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        state.kw = e.target.value.trim();
+        state.page = 1;
+        render();
+      }, 250);
+    });
+    $('searchInput').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      clearTimeout(searchTimer);
+      state.kw = e.target.value.trim();
+      state.page = 1;
+      render();
+    });
+
+    /* ===== 静态标记文案：data-i18n 节点按 locale 表填充（HTML 内中文为调用点缺省） ===== */
+    function applyStaticI18n() {
+      document.title = t('tpl.crud.title', 'CRUD 管理模板');
+      $('searchInput').placeholder = t('tpl.crud.searchPlaceholder', '搜索名称…');
+      $('searchInput').setAttribute('aria-label', t('tpl.crud.searchPlaceholder', '搜索名称…'));
+      qq('.pg-pager').setAttribute('aria-label', t('tpl.crud.pagerAria', '表格分页'));
+      if (RELATION) {
+        qq('#relCombo input[role="combobox"]').placeholder = t('tpl.crud.relAll', '全部');
+        qq('#relCombo input[role="combobox"]').setAttribute('aria-label', t('tpl.crud.relFilterAria', '按关联字段筛选'));
+        qq('#relCombo [data-clear]').setAttribute('aria-label', t('tpl.crud.clearRel', '清除筛选'));
+      } else {
+        $('relCombo').style.display = 'none'; // 无关联字段：隐藏 combobox（宪法：禁无数据来源筛选项）
+      }
+      for (const node of document.querySelectorAll('[data-i18n]')) {
+        node.textContent = t(node.dataset.i18n, node.textContent.trim());
+      }
+    }
+
+    /* ===== 启动：locale 就绪后再渲染 UI 文案；外壳随后挂载 ===== */
+    (async () => {
+      await ensureI18n();
+      applyStaticI18n();
+      buildForm();      // 弹窗表单按 FORM_FIELDS 生成（先于 loadRelation，combo 待填 options）
+      buildTableHead(); // 表头带先于骨架就位（table.md §6）
+      renderSkeleton();
+      if (RELATION) loadRelation().catch((err) => console.warn('crud: 关联数据加载失败（列回退 —）：', err)); // 失败不阻塞列表
+      render();
+      mountLayout({ active: null, title: t('tpl.crud.title', 'CRUD 管理模板') });
+      // 外壳把 #pageContent 移入 .lx-content 会改变容器宽度——挂载后重新同步两表宽度
+      requestAnimationFrame(() => syncTableWidth());
+      window.addEventListener('load', syncTableWidth);
+    })();
+
+    /* ============================================================
+     * demo_rows / demo_users：内置假数据，仅 USE_DEMO 演示增删改查闭环。
+     * 适配：接入真实表后删除以下全部假数据（正式页严禁保留，宪法硬性规则 2）
+     * ============================================================ */
+    const demo_users = [
+      { id: 'u1', name: '张伟' },
+      { id: 'u2', name: '李娜' },
+      { id: 'u3', name: '王强' },
+    ];
+    const demo_rows = [
+      { id: 'd1', name: '示例记录 A', owner_id: 'u1', quantity: 120, created_at: '2026-08-01T08:00:00.000Z' },
+      { id: 'd2', name: '示例记录 B', owner_id: 'u2', quantity: 340, created_at: '2026-08-14T09:30:00.000Z' },
+      { id: 'd3', name: '示例记录 C', owner_id: 'u1', quantity: 88, created_at: '2026-09-02T14:20:00.000Z' },
+      { id: 'd4', name: '示例记录 D', owner_id: null, quantity: null, created_at: '2026-09-18T10:00:00.000Z' },
+      { id: 'd5', name: '示例记录 E', owner_id: 'u3', quantity: 455, created_at: '2026-10-11T16:45:00.000Z' },
+      { id: 'd6', name: '示例记录 F', owner_id: 'u2', quantity: 62, created_at: '2026-10-20T11:05:00.000Z' },
+    ];
+  </script>
+</body>
+</html>
